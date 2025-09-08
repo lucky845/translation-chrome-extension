@@ -1,0 +1,62 @@
+{
+  "extensionName": {
+    "message": "网页翻译器",
+    "description": "The name of the extension"
+  },
+  "extensionDescription": {
+    "message": "一键将任何网页翻译成您偏好的语言",
+    "description": "The description of the extension"
+  },
+  "translatePageTitle": {
+    "message": "翻译此页面",
+    "description": "Title for the translate page context menu item"
+  },
+  "translateSelectedTextTitle": {
+    "message": "翻译选中文本",
+    "description": "Title for the translate selected text context menu item"
+  },
+  "popupTitle": {
+    "message": "网页翻译器",
+    "description": "Title shown in the popup window"
+  },
+  "targetLanguageLabel": {
+    "message": "目标语言：",
+    "description": "Label for the target language dropdown"
+  },
+  "translateButton": {
+    "message": "翻译页面",
+    "description": "Text for the translate button"
+  },
+  "restoreButton": {
+    "message": "显示原文",
+    "description": "Text for the restore button"
+  },
+  "optionsButton": {
+    "message": "选项",
+    "description": "Text for the options button"
+  },
+  "defaultLanguageLabel": {
+    "message": "默认目标语言：",
+    "description": "Label for the default language dropdown in options"
+  },
+  "translationServiceLabel": {
+    "message": "翻译服务：",
+    "description": "Label for the translation service dropdown in options"
+  },
+  "scrollTranslationLabel": {
+    "message": "默认启用滚动翻译",
+    "description": "Label for the scroll translation checkbox"
+  },
+  "apiKeyLabel": {
+    "message": "Bing 翻译器 API 密钥（可选）：",
+    "description": "Label for the API key input field"
+  },
+  "saveSettingsButton": {
+    "message": "保存设置",
+    "description": "Text for the save settings button"
+  },
+  "settingsSaved": {
+    "message": "设置保存成功！",
+    "description": "Message shown when settings are saved"
+  }
+}

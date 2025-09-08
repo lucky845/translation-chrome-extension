@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "default_locale": "en",
-  "name": "__MSG_extensionName__",
+  "default_locale": "zh_CN",
+  "name": "网页翻译",
   "description": "__MSG_extensionDescription__",
   "version": "1.0.0",
   "homepage_url": "https://github.com/FilipePS/Traduzir-paginas-web",
@@ -11,7 +11,7 @@
       "suggested_key": {
         "default": "Alt+T"
       },
-      "description": "Toggle between translated and original text"
+      "description": "实现网页翻译功能"
     }
   },
   "icons": {
