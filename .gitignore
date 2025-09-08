@@ -1,0 +1,30 @@
+# Node.js dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+
+# Log files
+*.log
+
+# Environment files
+.env*
+
+# IDE files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Test files
+test-translation.js
+
+# Temporary files
+*.tmp
+*.temp
+
+# Extension-specific files
+icons/*.png

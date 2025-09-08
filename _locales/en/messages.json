@@ -1,0 +1,62 @@
+{
+  "extensionName": {
+    "message": "Web Page Translator",
+    "description": "The name of the extension"
+  },
+  "extensionDescription": {
+    "message": "Translate any webpage to your preferred language with one click",
+    "description": "The description of the extension"
+  },
+  "translatePageTitle": {
+    "message": "Translate this page",
+    "description": "Title for the translate page context menu item"
+  },
+  "translateSelectedTextTitle": {
+    "message": "Translate selected text",
+    "description": "Title for the translate selected text context menu item"
+  },
+  "popupTitle": {
+    "message": "Web Page Translator",
+    "description": "Title shown in the popup window"
+  },
+  "targetLanguageLabel": {
+    "message": "Target Language:",
+    "description": "Label for the target language dropdown"
+  },
+  "translateButton": {
+    "message": "Translate Page",
+    "description": "Text for the translate button"
+  },
+  "restoreButton": {
+    "message": "Show Original",
+    "description": "Text for the restore button"
+  },
+  "optionsButton": {
+    "message": "Options",
+    "description": "Text for the options button"
+  },
+  "defaultLanguageLabel": {
+    "message": "Default Target Language:",
+    "description": "Label for the default language dropdown in options"
+  },
+  "translationServiceLabel": {
+    "message": "Translation Service:",
+    "description": "Label for the translation service dropdown in options"
+  },
+  "scrollTranslationLabel": {
+    "message": "Enable scroll translation by default",
+    "description": "Label for the scroll translation checkbox"
+  },
+  "apiKeyLabel": {
+    "message": "Bing Translator API Key (Optional):",
+    "description": "Label for the API key input field"
+  },
+  "saveSettingsButton": {
+    "message": "Save Settings",
+    "description": "Text for the save settings button"
+  },
+  "settingsSaved": {
+    "message": "Settings saved successfully!",
+    "description": "Message shown when settings are saved"
+  }
+}
