@@ -104,7 +104,3 @@
 - 改进动态内容处理
 - 翻译历史记录
 - 更好的用户界面和体验
-
-## 致谢
-
-基于 Filipe Pereira 的 [Traduzir-paginas-web](https://github.com/FilipePS/Traduzir-paginas-web) 项目。

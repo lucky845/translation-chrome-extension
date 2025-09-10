@@ -104,7 +104,3 @@ To modify the extension:
 - Improved handling of dynamic content
 - Translation history
 - Better UI/UX
-
-## Credits
-
-Based on the [Traduzir-paginas-web](https://github.com/FilipePS/Traduzir-paginas-web) project by Filipe Pereira.

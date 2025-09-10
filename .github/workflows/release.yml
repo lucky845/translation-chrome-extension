@@ -1,0 +1,55 @@
+name: Package and Release Extension
+
+on:
+    push:
+        tags:
+            - 'v*' # 仅在推送 v 开头的标签时触发, e.g., v1.0, v1.2.1
+
+jobs:
+    build-and-release:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write # 授予创建 Release 的权限
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Build and package the extension
+              id: package
+              run: |
+                  zip -r extension-${{ github.ref_name }}.zip * -x .git/ .github/ .DS_Store .AppleDouble .LSOverride ._* .DocumentRevisions-V100 .fseventsd .Spotlight-V100 .TemporaryItems .Trashes .VolumeIcon.icns .com.apple.timemachine.donotpresent .AppleDB .AppleDesktop .Network\ Trash\ Folder .apdisk Thumbs.db ehthumbs.db .idea/ .vscode/ *.swp *.swo node_modules/ dist/ build/ coverage/ package-lock.json yarn.lock *.log npm-debug.log* yarn-debug.log*
+                  echo "zip_name=extension-${{ github.ref_name }}.zip" >> $GITHUB_OUTPUT
+
+            - name: Create Release and Upload Asset
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: ${{ steps.package.outputs.zip_name }}
+                  tag_name: ${{ github.ref_name }}
+                  release_name: Release ${{ github.ref_name }}
+                  body: |
+                      这是 ${{ github.ref_name }} 版本的正式发布。
+                      打包好的 `${{ steps.package.outputs.zip_name }}` 文件已准备就绪，可用于提交到 Chrome Web Store。
+                  draft: false
+                  prerelease: false
+
+            - name: Debug secrets injection
+              env:
+                  EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+                  EDGE_CLIENT_SECRET: ${{ secrets.EDGE_CLIENT_SECRET }}
+                  EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+                  EDGE_EXTENSION_FILE: extension-${{ github.ref_name }}.zip
+              run: |
+                  echo "EDGE_CLIENT_ID is set: [${EDGE_CLIENT_ID:+yes}]"
+                  echo "EDGE_CLIENT_SECRET is set: [${EDGE_CLIENT_SECRET:+yes}]"
+                  echo "EDGE_PRODUCT_ID is set: [${EDGE_PRODUCT_ID:+yes}]"
+                  echo "EDGE_EXTENSION_FILE: $EDGE_EXTENSION_FILE"
+
+            - name: Upload to Edge Add-ons
+              env:
+                  EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+                  EDGE_CLIENT_SECRET: ${{ secrets.EDGE_CLIENT_SECRET }}
+                  EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+                  EDGE_EXTENSION_FILE: extension-${{ github.ref_name }}.zip
+              run: |
+                  bash script/edge-addon-publish.sh
+
