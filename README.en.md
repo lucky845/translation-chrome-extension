@@ -4,13 +4,16 @@ A Chrome extension that allows you to translate any webpage to your preferred la
 
 ## Features
 
-- Translate entire web pages with one click
-- Support for multiple languages
-- Option to restore original text
-- Context menu integration
-- Support for translating selected text
-- Configurable target language
-- Support for Google Translate API (with API key)
+- Translate entire web pages with one click, preserving original formatting and layout
+- Support for over 20 languages
+- Option to restore original text at any time
+- Context menu integration for quick translation of pages or selected text
+- Auto-detection of source language
+- Configurable default target language
+- Support for multiple translation services: Google Translate and Bing Translator (Microsoft Translator implemented through Bing Translator API)
+- Keyboard shortcut (Alt+T) for quick translation toggle
+- Support for translating dynamically loaded content
+- Support for multi-frame page translation
 
 ## Installation
 
@@ -35,27 +38,50 @@ A Chrome extension that allows you to translate any webpage to your preferred la
 
 ## Supported Languages
 
-- English
-- Spanish
-- French
-- German
-- Chinese (Simplified)
-- Japanese
-- Korean
-- Russian
-- Arabic
+The extension supports translation between 30 languages, including auto-detection functionality. The complete list of languages is as follows:
+
+- Auto-detect (auto)
+- Chinese (Simplified) (zh-CN)
+- Chinese (Traditional) (zh-TW)
+- English (en)
+- Japanese (ja)
+- Korean (ko)
+- French (fr)
+- German (de)
+- Spanish (es)
+- Russian (ru)
+- Portuguese (pt)
+- Italian (it)
+- Arabic (ar)
+- Hindi (hi)
+- Thai (th)
+- Vietnamese (vi)
+- Indonesian (id)
+- Malay (ms)
+- Polish (pl)
+- Turkish (tr)
+- Dutch (nl)
+- Swedish (sv)
+- Danish (da)
+- Finnish (fi)
+- Norwegian (no)
+- Hungarian (hu)
+- Czech (cs)
+- Romanian (ro)
+- Ukrainian (uk)
+- Greek (el)
 
 ## Technical Details
 
 This extension is built using Manifest V3 and follows modern Chrome extension practices:
 
-- **manifest.json**: Extension configuration
-- **background/background.js**: Background service worker handling translations
-- **contentScript/content.js**: Content script that runs on web pages
-- **popup/popup.html**: Popup UI for quick translation actions
-- **options/options.html**: Options page for configuration
-- **translate-api.js**: Interface for translation services
-- **real-translate-api.js**: Implementation for Google Translate API
+- **manifest.json**: Extension configuration file defining permissions, icons, popup pages, etc.
+- **background/background.js**: Background service worker handling translation logic, API calls, and message passing
+- **contentScript/content.js**: Content script running on web pages, responsible for actual page translation and state management
+- **popup/popup.html**: Popup UI for quick translation actions, providing translation/restore functions and settings access
+- **options/options.html**: Options page allowing users to set default language and translation service
+- **_locales/**: Internationalization resource files supporting multi-language interface
+- **icons/**: Extension icon files in four different sizes
 
 ## Development
 

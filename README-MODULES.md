@@ -6,12 +6,12 @@ This document provides detailed information about the various modules in the Web
 
 The extension is organized into several key modules:
 
-1. **Background Module** - Handles communication between different parts of the extension
+1. **Background Module** - Central hub handling communication, translation APIs, and settings
 2. **Content Script Module** - Runs on web pages and performs the actual translation
 3. **Popup Module** - Provides the user interface for quick translation actions
 4. **Options Module** - Allows users to configure extension settings
-5. **Translation API Module** - Implements the translation functionality
-6. **Real Translate API Module** - Provides access to Google Translate and Bing Translator APIs
+5. **Internationalization Module** - Supports multi-language interface
+6. **Icons Module** - Provides extension icons in different sizes
 
 ## Background Module
 
@@ -20,16 +20,24 @@ The background module is implemented in `background/background.js` and serves as
 - Message passing between content scripts and popup
 - Storage of user preferences
 - Context menu creation
-- API initialization and management
+- API implementation for multiple translation services
+- Language detection and mapping
+- Batch translation requests
+- Error handling and fallback mechanisms
+
+This module implements translation service classes extending a base API class, currently supporting Google Translate and Bing Translator. Microsoft Translator is implemented through the Bing Translator API. Yandex Translate support is not currently implemented.
 
 ## Content Script Module
 
 The content script module is implemented in `contentScript/content.js` and runs on every web page. It is responsible for:
 
-- Translating text nodes on the page
+- Translating text nodes on the page while preserving formatting
 - Restoring original text
 - Handling scroll events for dynamic content
-- Managing translation state across page reloads
+- Managing translation state
+- Listening for page mutations to handle dynamically loaded content
+- Communicating with the background module
+- Processing translation requests from the popup or context menu
 
 ## Popup Module
 
@@ -49,24 +57,18 @@ The options module is implemented in `options/options.html` and `options/options
 - Enter API key for Bing Translator
 - Save and load settings
 
-## Translation API Module
+## Internationalization Module
 
-The translation API module is implemented in `translate-api.js` and provides a unified interface for translation services. It supports:
+The internationalization module is implemented in the `_locales/` directory and provides support for multi-language interface. It includes:
 
-- Multiple translation services
-- API key authentication
-- Error handling
-- Mock translations for development
+- English (en) language resources
+- Simplified Chinese (zh_CN) language resources
 
-## Real Translate API Module
+This module allows the extension's user interface to adapt to the user's browser language preferences.
 
-The real translate API module is implemented in `real-translate-api.js` and provides direct access to:
+## Icons Module
 
-- Google Translate API (free)
-- Bing Translator API (requires API key)
+The icons module is implemented in the `icons/` directory and provides visual representation for the extension. It includes:
 
-It handles:
-- Authentication and token management
-- Batch translation requests
-- Language detection
-- Error handling and fallback mechanisms
+- Four different sizes of icons (16x16, 32x32, 48x48, and 128x128 pixels)
+- Logo design script for generating consistent icons

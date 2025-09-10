@@ -3,6 +3,42 @@
     "message": "Web Page Translator",
     "description": "The name of the extension"
   },
+  "autoTranslateLabel": {
+    "message": "Auto-translate English pages",
+    "description": "Label for auto-translate checkbox"
+  },
+  "optionsPageTitle": {
+    "message": "Web Page Translator Options",
+    "description": "Title for the options page"
+  },
+  "howToUseTitle": {
+    "message": "How to use:",
+    "description": "Title for the how to use section"
+  },
+  "howToUseStep1": {
+    "message": "1. Click the extension icon in the toolbar to open the popup",
+    "description": "Step 1 of how to use instructions"
+  },
+  "howToUseStep2": {
+    "message": "2. Select your target language",
+    "description": "Step 2 of how to use instructions"
+  },
+  "howToUseStep3": {
+    "message": "3. Click \"Translate Page\" to translate the current webpage",
+    "description": "Step 3 of how to use instructions"
+  },
+  "howToUseStep4": {
+    "message": "4. Click \"Show Original\" to revert to the original text",
+    "description": "Step 4 of how to use instructions"
+  },
+  "apiKeyPlaceholder": {
+    "message": "Enter your Bing Translator API key for better reliability",
+    "description": "Placeholder text for the API key input field"
+  },
+  "apiKeyInstructions": {
+    "message": "<small>If no API key is provided, the extension will use the free endpoint with limitations.</small>",
+    "description": "Instructions for API key field"
+  },
   "extensionDescription": {
     "message": "Translate any webpage to your preferred language with one click",
     "description": "The description of the extension"

@@ -20,12 +20,13 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": ["<all_urls>", "https://translate.googleapis.com/*", "https://edge.microsoft.com/*", "https://api.cognitive.microsofttranslator.com/*"],
   "permissions": [
     "activeTab",
     "storage",
     "contextMenus",
-    "scripting"
+    "scripting",
+    "webRequest"
   ],
   "options_ui": {
     "page": "options/options.html",
@@ -43,16 +44,19 @@
     {
       "matches": ["<all_urls>"],
       "run_at": "document_end",
-      "js": ["contentScript/content.js"]
+      "js": ["contentScript/content.js"],
+      "all_frames": true
     }
   ],
   "background": {
-    "service_worker": "background/background.js"
+    "service_worker": "background/background.js",
+    "type": "module"
   },
   "web_accessible_resources": [
     {
       "resources": [
-        "icons/*"
+        "icons/*",
+        "popup/popup.html"
       ],
       "matches": ["<all_urls>"]
     }

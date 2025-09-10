@@ -58,5 +58,49 @@
   "settingsSaved": {
     "message": "设置保存成功！",
     "description": "Message shown when settings are saved"
+  },
+  "autoTranslateLabel": {
+    "message": "自动翻译英文页面",
+    "description": "自动翻译复选框的标签"
+  },
+  "usingGoogleTranslator": {
+    "message": "使用 Google 翻译（免费）",
+    "description": "Text shown when using Google Translate service"
+  },
+  "usingBingTranslator": {
+    "message": "使用 Bing 翻译（免费）",
+    "description": "Text shown when using Bing Translate service"
+  },
+  "optionsPageTitle": {
+    "message": "网页翻译器选项",
+    "description": "Title for the options page"
+  },
+  "howToUseTitle": {
+    "message": "使用方法：",
+    "description": "Title for the how to use section"
+  },
+  "howToUseStep1": {
+    "message": "1. 点击工具栏中的扩展图标打开弹出窗口",
+    "description": "Step 1 of how to use instructions"
+  },
+  "howToUseStep2": {
+    "message": "2. 选择您的目标语言",
+    "description": "Step 2 of how to use instructions"
+  },
+  "howToUseStep3": {
+    "message": "3. 点击\"翻译页面\"翻译当前网页",
+    "description": "Step 3 of how to use instructions"
+  },
+  "howToUseStep4": {
+    "message": "4. 点击\"显示原文\"恢复原文",
+    "description": "Step 4 of how to use instructions"
+  },
+  "apiKeyPlaceholder": {
+    "message": "输入您的 Bing 翻译器 API 密钥以获得更好的可靠性",
+    "description": "Placeholder text for the API key input field"
+  },
+  "apiKeyInstructions": {
+    "message": "<small>如果不提供 API 密钥，扩展程序将使用有限制的免费端点。</small>",
+    "description": "Instructions for API key field"
   }
 }
