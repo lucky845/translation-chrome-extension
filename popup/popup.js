@@ -4,16 +4,36 @@ document.addEventListener("DOMContentLoaded", () => {
   const translateBtn = document.getElementById("translate-btn");
   const restoreBtn = document.getElementById("restore-btn");
   const optionsBtn = document.getElementById("options-btn");
+  const sourceLanguageSelect = document.getElementById("source-language-select");
   const languageSelect = document.getElementById("language-select");
   const serviceSelect = document.getElementById("service-select");
   const serviceInfo = document.getElementById("service-info");
   const autoTranslateCheckbox = document.getElementById("auto-translate-checkbox");
 
+  // 获取当前页面的语言并设置为源语言下拉框的默认值
+  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    if (tabs.length > 0) {
+      chrome.tabs.sendMessage(tabs[0].id, { action: "getPageLanguage" }, response => {
+        if (response && response.language) {
+          console.log("Current page language:", response.language);
+          // 设置源语言下拉框的值，如果匹配的选项存在
+          if (sourceLanguageSelect.querySelector(`option[value="${response.language}"]`)) {
+            sourceLanguageSelect.value = response.language;
+          }
+        }
+      });
+    }
+  });
+
   // 加载保存的设置
-  chrome.storage.sync.get(["targetLanguage", "translationService", "autoTranslate"], result => {
+  chrome.storage.sync.get(["targetLanguage", "sourceLanguage", "translationService", "autoTranslate"], result => {
     console.log("Loaded settings:", result);
     if (result.targetLanguage) {
       languageSelect.value = result.targetLanguage;
+    }
+
+    if (result.sourceLanguage) {
+      sourceLanguageSelect.value = result.sourceLanguage;
     }
 
     if (result.translationService) {
@@ -110,9 +130,23 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   });
 
+  // 源语言选择事件
+  sourceLanguageSelect.addEventListener("change", () => {
+    console.log("Source language setting changed:", sourceLanguageSelect.value);
+    chrome.storage.sync.set(
+      {
+        sourceLanguage: sourceLanguageSelect.value,
+      },
+      () => {
+        console.log("Source language setting saved");
+      }
+    );
+  });
+
   // 翻译按钮事件
   translateBtn.addEventListener("click", () => {
     console.log("Translate button clicked");
+    const sourceLanguage = sourceLanguageSelect.value;
     const targetLanguage = languageSelect.value;
     const translationService = serviceSelect.value;
     const autoTranslate = autoTranslateCheckbox.checked;
@@ -120,6 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // 保存设置
     chrome.storage.sync.set(
       {
+        sourceLanguage: sourceLanguage,
         targetLanguage: targetLanguage,
         translationService: translationService,
         autoTranslate: autoTranslate,

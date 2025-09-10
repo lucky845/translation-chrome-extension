@@ -19,6 +19,10 @@
     "message": "网页翻译器",
     "description": "Title shown in the popup window"
   },
+  "sourceLanguageLabel": {
+    "message": "源语言：",
+    "description": "Label for the source language dropdown"
+  },
   "targetLanguageLabel": {
     "message": "目标语言：",
     "description": "Label for the target language dropdown"
@@ -98,6 +102,14 @@
   "apiKeyPlaceholder": {
     "message": "输入您的 Bing 翻译器 API 密钥以获得更好的可靠性",
     "description": "Placeholder text for the API key input field"
+  },
+  "autoDetectSourceLabel": {
+    "message": "自动检测源语言",
+    "description": "自动检测源语言复选框的标签"
+  },
+  "autoDetectSourceDesc": {
+    "message": "推荐开启以获得更好的翻译准确度",
+    "description": "自动检测源语言复选框的描述"
   },
   "apiKeyInstructions": {
     "message": "<small>如果不提供 API 密钥，扩展程序将使用有限制的免费端点。</small>",

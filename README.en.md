@@ -8,7 +8,7 @@ A Chrome extension that allows you to translate any webpage to your preferred la
 - Support for over 20 languages
 - Option to restore original text at any time
 - Context menu integration for quick translation of pages or selected text
-- Auto-detection of source language
+- Source language dropdown that defaults to the current webpage language
 - Configurable default target language
 - Support for multiple translation services: Google Translate and Bing Translator (Microsoft Translator implemented through Bing Translator API)
 - Keyboard shortcut (Alt+T) for quick translation toggle
@@ -25,10 +25,11 @@ A Chrome extension that allows you to translate any webpage to your preferred la
 ## Usage
 
 1. Click the extension icon in the toolbar to open the popup
-2. Select your target language
-3. Click "Translate Page" to translate the current webpage
-4. Click "Show Original" to revert to the original text
-5. Use the context menu option to translate pages or selected text
+2. The source language dropdown will automatically show the current webpage language, or you can manually select the source language
+3. Select your target language
+4. Click "Translate Page" to translate the current webpage
+5. Click "Show Original" to revert to the original text
+6. Use the context menu option to translate pages or selected text
 
 ## Configuration
 
@@ -100,7 +101,6 @@ To modify the extension:
 ## Future Improvements
 
 - Support for more translation services
-- Auto-detection of source language
 - Improved handling of dynamic content
 - Translation history
 - Better UI/UX

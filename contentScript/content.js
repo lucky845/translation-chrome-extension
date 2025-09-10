@@ -8,8 +8,10 @@ const translatedNodes = new Set();
 let scrollTimeout = null;
 let currentTranslationService = "google";
 let targetLanguage = "zh-CN";
+let sourceLanguage = "auto"; // 源语言，默认自动检测
 const scrollTranslationEnabled = true;
 let autoTranslateEnabled = false;
+let autoDetectSource = true; // 是否自动检测源语言，默认为true
 let errorCount = 0;
 const MAX_ERRORS = 3;
 
@@ -37,6 +39,9 @@ function registerEventListeners() {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log("Content script received message:", request);
 
+    // 获取当前页面的语言
+    const pageLang = getPageLanguage();
+
     switch (request.action) {
       case "translatePage":
         translateEntirePage().then(() => sendResponse({ success: true }));
@@ -55,6 +60,12 @@ function registerEventListeners() {
         sendResponse({
           isTranslated: isTranslated,
           translationService: currentTranslationService,
+        });
+        break;
+
+      case "getPageLanguage":
+        sendResponse({
+          language: pageLang,
         });
         break;
 
@@ -81,15 +92,19 @@ function registerEventListeners() {
 // 加载用户设置
 function loadSettings() {
   return new Promise(resolve => {
-    chrome.storage.sync.get(["targetLanguage", "translationService", "autoTranslate"], result => {
+    chrome.storage.sync.get(["targetLanguage", "translationService", "autoTranslate", "autoDetectSource"], result => {
       targetLanguage = result.targetLanguage || "zh-CN";
       currentTranslationService = result.translationService || "google";
       autoTranslateEnabled = result.autoTranslate || false;
+      if (result.autoDetectSource !== undefined) {
+        autoDetectSource = result.autoDetectSource;
+      }
 
       console.log("Loaded settings:", {
         targetLanguage,
         currentTranslationService,
         autoTranslateEnabled,
+        autoDetectSource,
       });
 
       resolve();
@@ -153,6 +168,60 @@ function getPageLanguage() {
 
   // 4. 尝试检测内容语言（简单实现）
   return detectContentLanguage();
+}
+
+// 异步页面语言检测（结合API检测）
+async function detectPageLanguage() {
+  // 先尝试通过页面元数据获取语言
+  const pageLang = getPageLanguage();
+
+  // 如果启用了API检测，尝试通过翻译API进一步确认
+  if (autoDetectSource) {
+    try {
+      // 获取页面中一段具有代表性的文本进行语言检测
+      const sampleText = getPageSampleText();
+      if (sampleText) {
+        const detectedLang = await new Promise(resolve => {
+          chrome.runtime.sendMessage(
+            {
+              action: "detectLanguage",
+              text: sampleText,
+              service: currentTranslationService,
+            },
+            response => {
+              if (response && response.language) {
+                resolve(response.language);
+              } else {
+                resolve(pageLang);
+              }
+            }
+          );
+        });
+        return detectedLang;
+      }
+    } catch (error) {
+      console.error("Language detection via API failed:", error);
+      // 检测失败时回退到页面元数据语言
+    }
+  }
+  return pageLang;
+}
+
+// 获取页面样本文本用于语言检测
+function getPageSampleText() {
+  // 尝试从页面中获取一段有代表性的文本
+  const paragraphs = document.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
+  for (let i = 0; i < paragraphs.length; i++) {
+    const text = paragraphs[i].textContent.trim();
+    // 确保文本足够长以进行准确检测
+    if (text.length > 50) {
+      return text.substring(0, 500); // 截取前500个字符用于检测
+    }
+  }
+
+  // 如果没有找到足够长的段落，尝试获取body文本
+  const bodyText = document.body.textContent.trim();
+  return bodyText.length > 50 ? bodyText.substring(0, 500) : null;
 }
 
 // 检测内容语言
@@ -242,6 +311,16 @@ async function translateEntirePage() {
     // 重置翻译状态
     if (isTranslated) {
       restorePage();
+    }
+
+    // 如果启用了自动检测源语言，先检测页面语言
+    if (autoDetectSource) {
+      const detectedLang = await detectPageLanguage();
+      if (detectedLang && detectedLang !== targetLanguage) {
+        sourceLanguage = detectedLang;
+      } else {
+        sourceLanguage = "auto"; // 如果检测失败或与目标语言相同，使用自动检测
+      }
     }
 
     // 获取所有文本节点
@@ -345,7 +424,7 @@ async function translateBatch(texts, nodes) {
         {
           action: "translateBatch",
           texts: texts,
-          sourceLang: "auto",
+          sourceLang: sourceLanguage, // 使用检测到的源语言或auto
           targetLang: targetLanguage,
           service: currentTranslationService,
         },
@@ -500,31 +579,57 @@ function restorePage() {
 }
 
 // 翻译选定的文本
-function translateSelectedText(selectedText) {
+async function translateSelectedText(selectedText) {
   if (!selectedText || selectedText.trim() === "") return;
 
   console.log("Translating selected text");
-
-  // 调用后台API翻译选定文本
-  chrome.runtime.sendMessage(
-    {
-      action: "translateText",
-      text: selectedText,
-      sourceLang: "auto",
-      targetLang: targetLanguage,
-      service: currentTranslationService,
-    },
-    response => {
-      if (chrome.runtime.lastError || !response || !response.translatedText) {
-        console.error("Selected text translation failed", chrome.runtime.lastError);
-        showNotification("Translation failed", "Could not translate selected text");
-        return;
-      }
-
-      // 显示翻译结果
-      showTranslationPopup(selectedText, response.translatedText);
+  try {
+    // 如果启用了自动检测源语言，先检测选中的文本语言
+    let detectSourceLang = "auto";
+    if (autoDetectSource) {
+      // 直接使用后台的语言检测功能
+      detectSourceLang = await new Promise(resolve => {
+        chrome.runtime.sendMessage(
+          {
+            action: "detectLanguage",
+            text: selectedText,
+            service: currentTranslationService,
+          },
+          response => {
+            if (response && response.language && response.language !== targetLanguage) {
+              resolve(response.language);
+            } else {
+              resolve("auto");
+            }
+          }
+        );
+      });
     }
-  );
+
+    // 调用后台API翻译选定文本
+    chrome.runtime.sendMessage(
+      {
+        action: "translateText",
+        text: selectedText,
+        sourceLang: detectSourceLang, // 使用检测到的源语言或auto
+        targetLang: targetLanguage,
+        service: currentTranslationService,
+      },
+      response => {
+        if (chrome.runtime.lastError || !response || !response.translatedText) {
+          console.error("Selected text translation failed", chrome.runtime.lastError);
+          showNotification("Translation failed", "Could not translate selected text");
+          return;
+        }
+
+        // 显示翻译结果
+        showTranslationPopup(selectedText, response.translatedText);
+      }
+    );
+  } catch (error) {
+    console.error("Selected text translation failed:", error);
+    showNotification("Translation failed", "Could not translate selected text");
+  }
 }
 
 // 显示翻译弹窗

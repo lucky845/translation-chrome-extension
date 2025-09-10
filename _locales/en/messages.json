@@ -55,6 +55,10 @@
     "message": "Web Page Translator",
     "description": "Title shown in the popup window"
   },
+  "sourceLanguageLabel": {
+    "message": "Source Language:",
+    "description": "Label for the source language dropdown"
+  },
   "targetLanguageLabel": {
     "message": "Target Language:",
     "description": "Label for the target language dropdown"
@@ -94,5 +98,13 @@
   "settingsSaved": {
     "message": "Settings saved successfully!",
     "description": "Message shown when settings are saved"
+  },
+  "autoDetectSourceLabel": {
+    "message": "Auto-detect source language",
+    "description": "Label for auto-detect source language checkbox"
+  },
+  "autoDetectSourceDesc": {
+    "message": "Recommended for better translation accuracy",
+    "description": "Description for auto-detect source language checkbox"
   }
 }
