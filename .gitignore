@@ -25,6 +25,3 @@ test-translation.js
 # Temporary files
 *.tmp
 *.temp
-
-# Extension-specific files
-icons/*.png
