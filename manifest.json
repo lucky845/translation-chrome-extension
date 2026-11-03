@@ -1,17 +1,17 @@
 {
   "manifest_version": 3,
   "default_locale": "zh_CN",
-  "name": "网页翻译",
+  "name": "__MSG_extensionName__",
   "description": "__MSG_extensionDescription__",
-  "version": "1.0.1",
+  "version": "1.1.0",
+  "minimum_chrome_version": "102",
   "homepage_url": "https://github.com/FilipePS/Traduzir-paginas-web",
-  "minimum_chrome_version": "88.0",
   "commands": {
     "toggle-translation": {
       "suggested_key": {
         "default": "Alt+T"
       },
-      "description": "实现网页翻译功能"
+      "description": "__MSG_commandToggleDescription__"
     }
   },
   "icons": {
@@ -20,14 +20,12 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "host_permissions": ["<all_urls>", "https://translate.googleapis.com/*", "https://edge.microsoft.com/*", "https://api.cognitive.microsofttranslator.com/*"],
-  "permissions": [
-    "activeTab",
-    "storage",
-    "contextMenus",
-    "scripting",
-    "webRequest"
+  "host_permissions": [
+    "https://translate.googleapis.com/*",
+    "https://edge.microsoft.com/*",
+    "https://api.cognitive.microsofttranslator.com/*"
   ],
+  "permissions": ["storage", "contextMenus", "activeTab"],
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": true
@@ -42,23 +40,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "run_at": "document_end",
-      "js": ["contentScript/content.js"],
-      "all_frames": true
+      "matches": ["http://*/*", "https://*/*"],
+      "run_at": "document_idle",
+      "js": ["content/dom-core.js", "content/content.js"],
+      "all_frames": false
     }
   ],
   "background": {
-    "service_worker": "background/background.js",
+    "service_worker": "background/service-worker.js",
     "type": "module"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "icons/*",
-        "popup/popup.html"
-      ],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

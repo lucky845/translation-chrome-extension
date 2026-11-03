@@ -74,6 +74,18 @@ export default [
     },
   },
 
+  {
+    files: ["test/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        // Node 测试环境全局
+        process: "readonly",
+        URL: "readonly",
+        console: "readonly",
+      },
+    },
+  },
+
   // 针对不同目录的特定配置
   {
     files: ["background/**/*.js"],
@@ -81,18 +93,35 @@ export default [
       globals: {
         // Service Worker特定全局变量
         self: "readonly",
+        // fetch 超时控制（Service Worker 与 Node 20+ 均内置）
+        AbortSignal: "readonly",
       },
     },
   },
 
   {
-    files: ["contentScript/**/*.js"],
+    files: ["content/**/*.js"],
     languageOptions: {
       globals: {
         // 内容脚本可能需要的全局变量
         location: "readonly",
         history: "readonly",
+        window: "readonly",
       },
+    },
+  },
+
+  {
+    files: ["content/dom-core.js"],
+    languageOptions: {
+      globals: {
+        // dom-core 通过 module.exports 暴露给 Node 测试环境
+        module: "writable",
+      },
+    },
+    rules: {
+      // 尾部 IIFE 的 this 传参是刻意的（兼容无 globalThis 的环境）
+      "no-invalid-this": "off",
     },
   },
 ];

@@ -1,110 +1,122 @@
 {
   "extensionName": {
-    "message": "Web Page Translator",
+    "message": "Page Translator",
     "description": "The name of the extension"
   },
-  "autoTranslateLabel": {
-    "message": "Auto-translate English pages",
-    "description": "Label for auto-translate checkbox"
-  },
-  "optionsPageTitle": {
-    "message": "Web Page Translator Options",
-    "description": "Title for the options page"
-  },
-  "howToUseTitle": {
-    "message": "How to use:",
-    "description": "Title for the how to use section"
-  },
-  "howToUseStep1": {
-    "message": "1. Click the extension icon in the toolbar to open the popup",
-    "description": "Step 1 of how to use instructions"
-  },
-  "howToUseStep2": {
-    "message": "2. Select your target language",
-    "description": "Step 2 of how to use instructions"
-  },
-  "howToUseStep3": {
-    "message": "3. Click \"Translate Page\" to translate the current webpage",
-    "description": "Step 3 of how to use instructions"
-  },
-  "howToUseStep4": {
-    "message": "4. Click \"Show Original\" to revert to the original text",
-    "description": "Step 4 of how to use instructions"
-  },
-  "apiKeyPlaceholder": {
-    "message": "Enter your Bing Translator API key for better reliability",
-    "description": "Placeholder text for the API key input field"
-  },
-  "apiKeyInstructions": {
-    "message": "<small>If no API key is provided, the extension will use the free endpoint with limitations.</small>",
-    "description": "Instructions for API key field"
-  },
   "extensionDescription": {
-    "message": "Translate any webpage to your preferred language with one click",
+    "message": "Translate entire web pages in one click — preserves links, images and layout. Works with Google (free) and Azure Translator.",
     "description": "The description of the extension"
+  },
+  "popupTitle": {
+    "message": "Page Translator",
+    "description": "Popup title"
+  },
+  "sourceLanguageLabel": {
+    "message": "Source language",
+    "description": "Source language dropdown label"
+  },
+  "targetLanguageLabel": {
+    "message": "Target language",
+    "description": "Target language dropdown label"
+  },
+  "translationServiceLabel": {
+    "message": "Translation engine",
+    "description": "Engine dropdown label"
+  },
+  "autoTranslateLabel": {
+    "message": "Auto-translate pages in other languages",
+    "description": "Auto-translate checkbox label"
+  },
+  "autoTranslateDesc": {
+    "message": "When a page's language differs from your target language, translate it automatically",
+    "description": "Auto-translate description"
+  },
+  "translateButton": {
+    "message": "Translate page",
+    "description": "Translate button"
+  },
+  "restoreButton": {
+    "message": "Show original",
+    "description": "Restore button"
+  },
+  "optionsButton": {
+    "message": "Settings",
+    "description": "Options button"
+  },
+  "shortcutHint": {
+    "message": "Shortcut: Alt+T",
+    "description": "Shortcut hint in popup footer"
+  },
+  "commandToggleDescription": {
+    "message": "Toggle translation of the current page",
+    "description": "Keyboard command description"
   },
   "translatePageTitle": {
     "message": "Translate this page",
-    "description": "Title for the translate page context menu item"
+    "description": "Context menu: translate page"
   },
   "translateSelectedTextTitle": {
-    "message": "Translate selected text",
-    "description": "Title for the translate selected text context menu item"
+    "message": "Translate selection",
+    "description": "Context menu: translate selected text"
   },
-  "popupTitle": {
-    "message": "Web Page Translator",
-    "description": "Title shown in the popup window"
+  "optionsPageTitle": {
+    "message": "Page Translator · Settings",
+    "description": "Options page title"
   },
-  "sourceLanguageLabel": {
-    "message": "Source Language:",
-    "description": "Label for the source language dropdown"
-  },
-  "targetLanguageLabel": {
-    "message": "Target Language:",
-    "description": "Label for the target language dropdown"
-  },
-  "translateButton": {
-    "message": "Translate Page",
-    "description": "Text for the translate button"
-  },
-  "restoreButton": {
-    "message": "Show Original",
-    "description": "Text for the restore button"
-  },
-  "optionsButton": {
-    "message": "Options",
-    "description": "Text for the options button"
+  "optionsSubtitle": {
+    "message": "Translate entire pages while preserving links, images and layout",
+    "description": "Options subtitle"
   },
   "defaultLanguageLabel": {
-    "message": "Default Target Language:",
-    "description": "Label for the default language dropdown in options"
+    "message": "Default target language",
+    "description": "Default target language label"
   },
-  "translationServiceLabel": {
-    "message": "Translation Service:",
-    "description": "Label for the translation service dropdown in options"
+  "defaultLanguageDesc": {
+    "message": "The language used when you click \"Translate page\"",
+    "description": "Default target language description"
   },
-  "scrollTranslationLabel": {
-    "message": "Enable scroll translation by default",
-    "description": "Label for the scroll translation checkbox"
+  "engineDesc": {
+    "message": "Google's free endpoint works out of the box; Azure Translator suits users with a subscription key",
+    "description": "Engine description"
   },
   "apiKeyLabel": {
-    "message": "Bing Translator API Key (Optional):",
-    "description": "Label for the API key input field"
+    "message": "Azure Translator key",
+    "description": "API key label"
+  },
+  "apiKeyPlaceholder": {
+    "message": "Paste your Azure Translator resource key",
+    "description": "API key placeholder"
+  },
+  "apiKeyHint": {
+    "message": "Create a Translator resource in the Azure Portal to get a key. The legacy free Bing endpoint stopped working in Nov 2026, so this engine now requires a key.",
+    "description": "API key hint"
   },
   "saveSettingsButton": {
-    "message": "Save Settings",
-    "description": "Text for the save settings button"
+    "message": "Save settings",
+    "description": "Save button"
   },
   "settingsSaved": {
-    "message": "Settings saved successfully!",
-    "description": "Message shown when settings are saved"
+    "message": "Settings saved",
+    "description": "Saved message"
   },
-  "autoDetectSourceLabel": {
-    "message": "Auto-detect source language",
-    "description": "Label for auto-detect source language checkbox"
+  "howToUseTitle": {
+    "message": "How to use",
+    "description": "How-to title"
   },
-  "autoDetectSourceDesc": {
-    "message": "Recommended for better translation accuracy",
-    "description": "Description for auto-detect source language checkbox"
+  "howToUseStep1": {
+    "message": "Click the toolbar icon to open the popup",
+    "description": "Step 1"
+  },
+  "howToUseStep2": {
+    "message": "Pick your target language and engine",
+    "description": "Step 2"
+  },
+  "howToUseStep3": {
+    "message": "Click \"Translate page\" or press Alt+T",
+    "description": "Step 3"
+  },
+  "howToUseStep4": {
+    "message": "Right-click any selection to translate just that text",
+    "description": "Step 4"
   }
 }

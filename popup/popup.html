@@ -1,158 +1,164 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <title data-i18n="popupTitle">网页翻译</title>
   <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --ok: #047857;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
     body {
-      width: 300px;
-      padding: 20px;
-      font-family: Arial, sans-serif;
+      width: 320px;
+      margin: 0;
+      padding: 16px;
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg);
     }
     h1 {
-      font-size: 18px;
-      margin-top: 0;
-      color: #333;
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .2px;
     }
-    button {
-      width: 100%;
-      padding: 10px;
-      margin: 5px 0;
-      background-color: #4285f4;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    button:hover {
-      background-color: #3367d6;
-    }
-    button.restore {
-      background-color: #aaa;
-    }
-    button.restore:hover {
-      background-color: #888;
-    }
-    button.active {
-      background-color: #4285f4;
-    }
-    button.active:hover {
-      background-color: #3367d6;
+    .field { margin-bottom: 10px; }
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: var(--muted);
     }
     select {
       width: 100%;
-      padding: 8px;
-      margin: 5px 0;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      padding: 7px 8px;
+      font-size: 13px;
+      color: var(--fg);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      outline: none;
     }
-    .footer {
-      margin-top: 15px;
-      text-align: center;
+    select:focus { border-color: var(--accent); }
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 12px 0;
       font-size: 12px;
-      color: #666;
+      color: var(--muted);
+      cursor: pointer;
     }
-    .service-info {
-      font-size: 11px;
-      color: #666;
-      text-align: center;
+    .checkbox input { margin: 0; }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      padding: 9px 10px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background .15s ease;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled {
+      color: #9ca3af;
+      background: #f3f4f6;
+      cursor: not-allowed;
+    }
+    .engine-info {
       margin-top: 10px;
+      padding: 7px 9px;
+      font-size: 11.5px;
+      line-height: 1.5;
+      border-radius: 6px;
+      background: #f9fafb;
+      color: var(--muted);
+      border: 1px solid var(--line);
     }
+    .engine-info.ok { color: var(--ok); border-color: #d1fae5; background: #f0fdf4; }
+    .engine-info.warn { color: var(--warn); border-color: #fef3c7; background: #fffbeb; }
+    .status {
+      margin-top: 10px;
+      min-height: 18px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .status.ok { color: var(--ok); }
+    .status.warn { color: var(--warn); }
+    .status.info { color: var(--muted); }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .footer button {
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--muted);
+      background: transparent;
+    }
+    .footer button:hover:not(:disabled) { color: var(--accent); background: transparent; }
+    .hint { font-size: 11px; color: #9ca3af; }
   </style>
 </head>
 <body>
-  <h1 data-i18n="popupTitle">Web Page Translator</h1>
-  
-  <label for="source-language-select" data-i18n="sourceLanguageLabel">Source Language:</label>
-  <select id="source-language-select">
-      <option value="en">English</option>
-      <option value="zh-CN">Chinese (Simplified)</option>
-      <option value="zh-TW">Chinese (Traditional)</option>
-      <option value="ja">Japanese</option>
-      <option value="ko">Korean</option>
-      <option value="fr">French</option>
-      <option value="de">German</option>
-      <option value="es">Spanish</option>
-      <option value="ru">Russian</option>
-      <option value="pt">Portuguese</option>
-      <option value="it">Italian</option>
-      <option value="ar">Arabic</option>
-      <option value="hi">Hindi</option>
-      <option value="th">Thai</option>
-      <option value="vi">Vietnamese</option>
-      <option value="id">Indonesian</option>
-      <option value="ms">Malay</option>
-      <option value="pl">Polish</option>
-      <option value="tr">Turkish</option>
-      <option value="nl">Dutch</option>
-      <option value="sv">Swedish</option>
-      <option value="da">Danish</option>
-      <option value="fi">Finnish</option>
-      <option value="no">Norwegian</option>
-      <option value="hu">Hungarian</option>
-      <option value="cs">Czech</option>
-      <option value="ro">Romanian</option>
-      <option value="uk">Ukrainian</option>
-      <option value="el">Greek</option>
+  <h1 data-i18n="popupTitle">网页翻译</h1>
+
+  <div class="field">
+    <label for="source-language" data-i18n="sourceLanguageLabel">源语言</label>
+    <select id="source-language"></select>
+  </div>
+
+  <div class="field">
+    <label for="target-language" data-i18n="targetLanguageLabel">目标语言</label>
+    <select id="target-language"></select>
+  </div>
+
+  <div class="field">
+    <label for="engine" data-i18n="translationServiceLabel">翻译引擎</label>
+    <select id="engine">
+      <option value="google">Google（免费）</option>
+      <option value="bing">Azure Translator（需密钥）</option>
     </select>
-  
-  <label for="language-select" data-i18n="targetLanguageLabel">Target Language:</label>
-  <select id="language-select">
-      <option value="en">English</option>
-      <option value="zh-CN">Chinese (Simplified)</option>
-      <option value="zh-TW">Chinese (Traditional)</option>
-      <option value="ja">Japanese</option>
-      <option value="ko">Korean</option>
-      <option value="fr">French</option>
-      <option value="de">German</option>
-      <option value="es">Spanish</option>
-      <option value="ru">Russian</option>
-      <option value="pt">Portuguese</option>
-      <option value="it">Italian</option>
-      <option value="ar">Arabic</option>
-      <option value="hi">Hindi</option>
-      <option value="th">Thai</option>
-      <option value="vi">Vietnamese</option>
-      <option value="id">Indonesian</option>
-      <option value="ms">Malay</option>
-      <option value="pl">Polish</option>
-      <option value="tr">Turkish</option>
-      <option value="nl">Dutch</option>
-      <option value="sv">Swedish</option>
-      <option value="da">Danish</option>
-      <option value="fi">Finnish</option>
-      <option value="no">Norwegian</option>
-      <option value="hu">Hungarian</option>
-      <option value="cs">Czech</option>
-      <option value="ro">Romanian</option>
-      <option value="uk">Ukrainian</option>
-      <option value="el">Greek</option>
-    </select>
-  
-  <label for="service-select" data-i18n="translationServiceLabel">Translation Service:</label>
-  <select id="service-select">
-    <option value="google">Google Translate (Free)</option>
-    <option value="bing">Bing Translator (Free)</option>
-  </select>
-  
-  <label style="display: flex; align-items: center; margin: 10px 0;">
-    <input type="checkbox" id="auto-translate-checkbox" style="margin-right: 5px;">
-    <span data-i18n="autoTranslateLabel">Auto-translate English pages</span>
+  </div>
+
+  <label class="checkbox">
+    <input type="checkbox" id="auto-translate">
+    <span data-i18n="autoTranslateLabel">自动翻译非目标语言页面</span>
   </label>
-  
-  
-  <button id="translate-btn" data-i18n="translateButton">Translate Page</button>
-  <button id="restore-btn" class="restore" data-i18n="restoreButton">Show Original</button>
-  <button id="options-btn" data-i18n="optionsButton">Options</button>
-  
-  <div class="service-info" id="service-info">
-    Using Google Translate (Free)
+
+  <div class="actions">
+    <button id="translate-btn" data-i18n="translateButton">翻译页面</button>
+    <button id="restore-btn" data-i18n="restoreButton" disabled>显示原文</button>
   </div>
-  
+
+  <div class="engine-info" id="engine-info">检测引擎状态…</div>
+  <div class="status" id="status"></div>
+
   <div class="footer">
-    <p>Translate any webpage with one click</p>
+    <span class="hint" data-i18n="shortcutHint">快捷键 Alt+T 切换</span>
+    <button id="options-btn" data-i18n="optionsButton">设置</button>
   </div>
-  
+
   <script src="popup.js"></script>
 </body>
 </html>
