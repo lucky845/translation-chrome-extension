@@ -11,6 +11,7 @@ Manifest V3 · 零构建 · 零运行时依赖
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
 ![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+[![Edge Add-ons](https://img.shields.io/badge/Get_it_from-Microsoft-0d6cb6?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan)
 
 </div>
 
@@ -35,6 +36,14 @@ Manifest V3 · 零构建 · 零运行时依赖
 - **🌍 30 种语言**，中英双语界面
 
 ## 📥 安装
+
+### Microsoft Edge（推荐）
+
+直接从 [Edge 加载项商店](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan) 一键安装：
+
+👉 [https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan)
+
+### Chrome / 其他 Chromium 浏览器
 
 > 本扩展尚未发布到 Chrome Web Store，请以开发者模式加载。
 
