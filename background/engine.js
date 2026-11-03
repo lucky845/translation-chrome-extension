@@ -10,7 +10,10 @@
  *   [["译文", "检测到的语言"], [["译文", "en"], ...]] 两种形态都可能出现，统一归一化。
  */
 
-const ENDPOINT = "https://translate.googleapis.com/translate_a/t";
+const ENDPOINTS = [
+  "https://translate.googleapis.com/translate_a/t",
+  "https://translate.google.cn/translate_a/t",
+];
 
 // 单次请求上限。实测 400 条普通句子会 400 错误，200 条稳定；body 控制在 48KB 内。
 const MAX_TEXTS_PER_CHUNK = 200;
@@ -79,15 +82,16 @@ export class GoogleEngine extends BaseEngine {
     for (const text of texts) params.append("q", text);
 
     let lastError = null;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
-      try {
-        const response = await fetch(ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: params.toString(),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
+    for (const endpoint of ENDPOINTS) {
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString(),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          });
 
         if (!response.ok) {
           // 429 是限流，退避重试是正确策略；其他 4xx 重试不会有不同结果
@@ -104,12 +108,16 @@ export class GoogleEngine extends BaseEngine {
         }
         return data.map(GoogleEngine.normalizeItem);
       } catch (error) {
-        if (error instanceof FatalTranslationError) throw error;
+        if (error instanceof FatalTranslationError) {
+          lastError = error;
+          break;
+        }
         // 超时/网络中断/限流/结构异常都重试
         lastError = error;
       }
     }
-    throw lastError || new Error("翻译请求失败");
+  }
+  throw lastError || new Error("翻译请求失败");
   }
 
   /**
