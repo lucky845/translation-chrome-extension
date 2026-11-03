@@ -204,7 +204,17 @@
       const current = els.engine.value;
       const info = engines[current];
       if (info && info.available) {
-        els.engineInfo.textContent = current === "google" ? "Google 免费接口 · 可用" : "Azure 翻译 · 可用";
+        if (current === "google") {
+          els.engineInfo.textContent = "Google 免费接口 · 可用";
+        } else if (current === "mymemory") {
+          els.engineInfo.textContent = "MyMemory 免费接口 · 可用";
+        } else if (current === "lingva") {
+          els.engineInfo.textContent = "Lingva 免费接口 · 可用";
+        } else if (current === "bing") {
+          els.engineInfo.textContent = "Azure 翻译 · 可用";
+        } else {
+          els.engineInfo.textContent = "引擎可用";
+        }
         els.engineInfo.className = "engine-info ok";
       } else {
         els.engineInfo.textContent = (info && info.reason) || "当前引擎不可用";

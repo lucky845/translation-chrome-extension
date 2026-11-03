@@ -320,8 +320,11 @@ export class MyMemoryEngine extends BaseEngine {
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!response.ok) {
-          if (response.status !== 429 && response.status >= 400 && response.status < 500) {
-            throw new FatalTranslationError(`MyMemory HTTP ${response.status}`);
+          if (response.status === 429) {
+            throw new RetryableError(`MyMemory HTTP ${response.status}`);
+          }
+          if (response.status >= 400 && response.status < 500) {
+            throw new RetryableError(`MyMemory HTTP ${response.status}`);
           }
           throw new RetryableError(`MyMemory HTTP ${response.status}`);
         }
@@ -332,7 +335,10 @@ export class MyMemoryEngine extends BaseEngine {
         if (data.quotaFinished) {
           throw new FatalTranslationError("MyMemory 匿名配额已耗尽（当日）");
         }
-        if (data.responseStatus !== 200) {
+        if (data.responseStatus && data.responseStatus !== 200) {
+          if (data.responseStatus === 429 || data.responseStatus === 403) {
+            throw new RetryableError(`MyMemory responseStatus ${data.responseStatus}`);
+          }
           throw new FatalTranslationError(`MyMemory responseStatus ${data.responseStatus}`);
         }
         return {

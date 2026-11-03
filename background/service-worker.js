@@ -104,8 +104,12 @@ const handlers = {
    * @return {Promise<Object>} 可用性
    */
   async getEngineStatus() {
-    const settings = await getSettings();
-    return { ok: true, engines: await engineAvailability(settings) };
+    try {
+      const settings = await getSettings();
+      return { ok: true, engines: await engineAvailability(settings) };
+    } catch (error) {
+      return { ok: false, engines: {}, error: error && error.message ? error.message : String(error) };
+    }
   },
 };
 
@@ -125,6 +129,8 @@ async function engineAvailability(settings) {
       available: Boolean(settings.apiKey),
       reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
     },
+    mymemory: { available: true, reason: null },
+    lingva: { available: true, reason: null },
   };
 
   // 轻量探测 Google：单条极短请求，失败也不抛出
@@ -135,6 +141,26 @@ async function engineAvailability(settings) {
   } catch (error) {
     status.google.available = false;
     status.google.reason = error.message || String(error);
+  }
+
+  // 探测 MyMemory
+  try {
+    const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "mymemory");
+    status.mymemory.available = probe.ok;
+    status.mymemory.reason = probe.ok ? null : probe.error || "请求失败";
+  } catch (error) {
+    status.mymemory.available = false;
+    status.mymemory.reason = error.message || String(error);
+  }
+
+  // 探测 Lingva
+  try {
+    const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "lingva");
+    status.lingva.available = probe.ok;
+    status.lingva.reason = probe.ok ? null : probe.error || "请求失败";
+  } catch (error) {
+    status.lingva.available = false;
+    status.lingva.reason = error.message || String(error);
   }
 
   return status;
