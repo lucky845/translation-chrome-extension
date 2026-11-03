@@ -46,39 +46,61 @@
    * @return {Promise<void>}
    */
   async function init() {
-    const els = {
-      source: document.getElementById("source-language"),
-      target: document.getElementById("target-language"),
-      engine: document.getElementById("engine"),
-      auto: document.getElementById("auto-translate"),
-      translateBtn: document.getElementById("translate-btn"),
-      restoreBtn: document.getElementById("restore-btn"),
-      status: document.getElementById("status"),
-      engineInfo: document.getElementById("engine-info"),
-      optionsBtn: document.getElementById("options-btn"),
-    };
+    try {
+      const els = {
+        source: document.getElementById("source-language"),
+        target: document.getElementById("target-language"),
+        engine: document.getElementById("engine"),
+        auto: document.getElementById("auto-translate"),
+        translateBtn: document.getElementById("translate-btn"),
+        restoreBtn: document.getElementById("restore-btn"),
+        status: document.getElementById("status"),
+        engineInfo: document.getElementById("engine-info"),
+        optionsBtn: document.getElementById("options-btn"),
+      };
 
-    fillSelect(els.source, LANGS, true);
-    fillSelect(els.target, LANGS, false);
-    applyI18n();
+      fillSelect(els.source, LANGS, true);
+      fillSelect(els.target, LANGS, false);
+      applyI18n();
 
-    await loadSettings(els);
-    await refreshPageState(els);
+      await loadSettings(els);
+      try {
+        await refreshPageState(els);
+      } catch {}
 
-    els.engine.addEventListener("change", async () => {
-      await saveSettings({ engine: els.engine.value });
-      await checkEngine(els);
-    });
+      if (els.engine) {
+        els.engine.addEventListener("change", async () => {
+          try {
+            await saveSettings({ engine: els.engine.value });
+            await checkEngine(els);
+          } catch {}
+        });
+      }
 
-    els.target.addEventListener("change", () => saveSettings({ targetLanguage: els.target.value }));
-    els.source.addEventListener("change", () => saveSettings({ sourceLanguage: els.source.value }));
-    els.auto.addEventListener("change", () => saveSettings({ autoTranslate: els.auto.checked }));
+      if (els.target) els.target.addEventListener("change", () => saveSettings({ targetLanguage: els.target.value }).catch(() => {}));
+      if (els.source) els.source.addEventListener("change", () => saveSettings({ sourceLanguage: els.source.value }).catch(() => {}));
+      if (els.auto) els.auto.addEventListener("change", () => saveSettings({ autoTranslate: els.auto.checked }).catch(() => {}));
 
-    els.translateBtn.addEventListener("click", () => runAction(els, "translatePage"));
-    els.restoreBtn.addEventListener("click", () => runAction(els, "restorePage"));
-    els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
+      if (els.translateBtn) els.translateBtn.addEventListener("click", () => runAction(els, "translatePage"));
+      if (els.restoreBtn) els.restoreBtn.addEventListener("click", () => runAction(els, "restorePage"));
+      if (els.optionsBtn) els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
-    await checkEngine(els);
+      try {
+        await checkEngine(els);
+      } catch (e) {
+        if (els.engineInfo) {
+          els.engineInfo.textContent = "引擎可用（探测跳过）";
+          els.engineInfo.className = "engine-info warn";
+        }
+      }
+    } catch (e) {
+      // 最终兜底：避免弹窗空白
+      const status = document.getElementById("status");
+      if (status) {
+        status.textContent = "初始化失败：" + (e && e.message ? e.message : String(e));
+        status.className = "status warn";
+      }
+    }
   }
 
   /**
@@ -105,17 +127,21 @@
    * @return {Promise<void>}
    */
   async function loadSettings(els) {
-    const stored = await chrome.storage.sync.get({
-      targetLanguage: "zh-CN",
-      sourceLanguage: "auto",
-      engine: "google",
-      autoTranslate: false,
-    });
+    try {
+      const stored = await chrome.storage.sync.get({
+        targetLanguage: "zh-CN",
+        sourceLanguage: "auto",
+        engine: "google",
+        autoTranslate: false,
+      });
 
-    els.target.value = stored.targetLanguage;
-    els.source.value = stored.sourceLanguage;
-    els.engine.value = stored.engine;
-    els.auto.checked = Boolean(stored.autoTranslate);
+      if (els.target) els.target.value = stored.targetLanguage;
+      if (els.source) els.source.value = stored.sourceLanguage;
+      if (els.engine) els.engine.value = stored.engine;
+      if (els.auto) els.auto.checked = Boolean(stored.autoTranslate);
+    } catch (e) {
+      // storage 失败也不影响界面显示
+    }
   }
 
   /**
@@ -124,7 +150,9 @@
    * @return {Promise<void>}
    */
   async function saveSettings(patch) {
-    await chrome.storage.sync.set(patch);
+    try {
+      await chrome.storage.sync.set(patch);
+    } catch {}
   }
 
   /**
@@ -284,8 +312,8 @@
    * @param {boolean} translated 是否已翻译
    */
   function setButtons(els, translated) {
-    els.translateBtn.disabled = translated;
-    els.restoreBtn.disabled = !translated;
+    if (els.translateBtn) els.translateBtn.disabled = translated;
+    if (els.restoreBtn) els.restoreBtn.disabled = !translated;
   }
 
   /**
@@ -294,8 +322,8 @@
    * @param {boolean} busy 是否忙碌
    */
   function setBusy(els, busy) {
-    els.translateBtn.disabled = busy;
-    els.restoreBtn.disabled = busy;
+    if (els.translateBtn) els.translateBtn.disabled = busy;
+    if (els.restoreBtn) els.restoreBtn.disabled = busy;
   }
 
   /**
@@ -305,7 +333,9 @@
    * @param {string} kind 类型 ok/warn/info
    */
   function setStatus(els, text, kind) {
-    els.status.textContent = text;
-    els.status.className = "status " + kind;
+    if (els.status) {
+      els.status.textContent = text;
+      els.status.className = "status " + kind;
+    }
   }
 })();
