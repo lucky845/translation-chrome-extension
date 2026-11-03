@@ -2,6 +2,14 @@
   "name": "translation-chrome-extension",
   "version": "1.1.0",
   "description": "A Chrome extension for translating web pages",
+  "author": "lucky845 <lc1447545564@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucky845/translation-chrome-extension.git"
+  },
+  "homepage": "https://github.com/lucky845/translation-chrome-extension#readme",
+  "bugs": "https://github.com/lucky845/translation-chrome-extension/issues",
   "main": "background/service-worker.js",
   "scripts": {
     "lint": "eslint .",
