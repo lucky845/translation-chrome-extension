@@ -10,7 +10,15 @@
  */
 import assert from "node:assert/strict";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
-import { GoogleEngine, FatalTranslationError, createEngine } from "../background/engine.js";
+import {
+  GoogleEngine,
+  MyMemoryEngine,
+  LingvaEngine,
+  FatalTranslationError,
+  RetryableError,
+  splitSentences,
+  createEngine,
+} from "../background/engine.js";
 
 // Node 20 的 fetch 不读代理环境变量，显式挂代理
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY;
@@ -26,7 +34,8 @@ const results = [];
  * @return {boolean} true 表示环境受限
  */
 function isRateLimited(error) {
-  if (String(error && error.message).includes("HTTP 429")) {
+  const message = String(error && error.message);
+  if (message.includes("HTTP 429") || message.includes("Lingva 全部实例失败")) {
     environmentLimited = true;
     return true;
   }
@@ -123,6 +132,211 @@ await test("未知引擎名回退到 Google", async () => {
   const engine = createEngine("unknown-engine");
   const [result] = await engine.translate(["hello"], "en", "zh-CN");
   assert.ok(result.text.length > 0);
+});
+
+console.log("\n[2.5] 新引擎 · mock 单元测试（拦截 fetch，不依赖网络）");
+
+/** 用例计数，供 mock fetch 识别当前应答哪条请求 */
+function withMockFetch(handler, fn) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => handler(String(input), init);
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      globalThis.fetch = original;
+    });
+}
+
+await test("MyMemory：正常解析 text 与 detected", async () => {
+  await withMockFetch(
+    url =>
+      new Response(
+        JSON.stringify({
+          responseData: { translatedText: "你好" },
+          detectedLanguage: "en",
+          responseStatus: 200,
+          quotaFinished: false,
+        }),
+        { status: 200 }
+      ),
+    async () => {
+      const engine = new MyMemoryEngine();
+      const [result] = await engine.translate(["hello"], "auto", "zh-CN");
+      assert.equal(result.text, "你好");
+      assert.equal(result.detected, "en");
+    }
+  );
+});
+
+await test("MyMemory：quotaFinished 抛 Fatal（当日配额尽，重试无意义）", async () => {
+  await withMockFetch(
+    () =>
+      new Response(
+        JSON.stringify({
+          responseData: { translatedText: "" },
+          responseStatus: 200,
+          quotaFinished: true,
+        }),
+        { status: 200 }
+      ),
+    async () => {
+      const engine = new MyMemoryEngine();
+      await assert.rejects(
+        () => engine.translate(["hi"], "en", "zh-CN"),
+        error => error instanceof FatalTranslationError
+      );
+    }
+  );
+});
+
+await test("MyMemory：429 按重试策略退避后成功", async () => {
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      if (calls < 3) return new Response("rate limited", { status: 429 });
+      return new Response(
+        JSON.stringify({
+          responseData: { translatedText: "恢复" },
+          responseStatus: 200,
+          quotaFinished: false,
+        }),
+        { status: 200 }
+      );
+    },
+    async () => {
+      const engine = new MyMemoryEngine();
+      const [result] = await engine.translate(["hi"], "en", "zh-CN");
+      assert.equal(result.text, "恢复");
+      assert.ok(calls >= 3, `应有重试，实际 ${calls} 次`);
+    }
+  );
+});
+
+await test("MyMemory：超长文本按句拆片拼接", async () => {
+  await withMockFetch(
+    url => {
+      const q = new URL(url).searchParams.get("q");
+      return new Response(
+        JSON.stringify({
+          responseData: { translatedText: `[${q}]` },
+          responseStatus: 200,
+          quotaFinished: false,
+        }),
+        { status: 200 }
+      );
+    },
+    async () => {
+      const engine = new MyMemoryEngine();
+      const long = "First sentence goes here. ".repeat(30).trim();
+      const [result] = await engine.translate([long], "en", "zh-CN");
+      const segments = splitSentences(long, 450);
+      assert.ok(segments.length >= 2, `应拆成多片: ${segments.length}`);
+      assert.ok(result.text.includes("[") && result.text.includes("]"), "应含多片回显");
+    }
+  );
+});
+
+await test("splitSentences：句边界聚合、超长单句硬切、顺序保持", () => {
+  const segments = splitSentences("One. Two. Three.", 8);
+  assert.ok(segments.length >= 2);
+  assert.equal(segments.join(" "), "One. Two. Three.");
+  const hard = splitSentences("a".repeat(1000), 300);
+  assert.equal(hard.length, 4);
+  assert.ok(hard.every(s => s.length <= 300));
+  assert.equal(splitSentences("", 100).length, 0);
+});
+
+await test("Lingva：首选实例失败自动轮换下一实例并记住成功者", async () => {
+  LingvaEngine.preferredInstance = null;
+  await withMockFetch(
+    url => {
+      if (url.includes("lingva.ml")) return new Response("cf blocked", { status: 503 });
+      if (url.includes("garudalinux")) {
+        return new Response(JSON.stringify({ translation: "镜像成功" }), { status: 200 });
+      }
+      return new Response("unexpected host", { status: 500 });
+    },
+    async () => {
+      const engine = new LingvaEngine();
+      const [result] = await engine.translate(["hello"], "en", "zh-CN");
+      assert.equal(result.text, "镜像成功");
+      assert.equal(LingvaEngine.preferredInstance, "https://lingva.garudalinux.org");
+    }
+  );
+});
+
+await test("Lingva：全部实例失败抛 Retryable（留给降级链）", async () => {
+  await withMockFetch(
+    () => new Response("down", { status: 503 }),
+    async () => {
+      const engine = new LingvaEngine();
+      await assert.rejects(
+        () => engine.translate(["hi"], "en", "zh-CN"),
+        error => error instanceof RetryableError
+      );
+    }
+  );
+});
+
+await test("降级链：Google 与 Lingva 全挂时 MyMemory 兜底", async () => {
+  // translator.js 依赖 chrome.storage，Node 环境 stub 之
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts } = await import("../background/translator.js");
+  await withMockFetch(
+    url => {
+      if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+      if (url.includes("lingva")) return new Response("down", { status: 503 });
+      if (url.includes("api.mymemory.translated.net")) {
+        const q = new URL(url).searchParams.get("q");
+        return new Response(
+          JSON.stringify({
+            responseData: { translatedText: `MM[${q}]` },
+            detectedLanguage: "en",
+            responseStatus: 200,
+            quotaFinished: false,
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("unknown", { status: 500 });
+    },
+    async () => {
+      const outcome = await translateTexts(["hello world"], "auto", "zh-CN", "google");
+      assert.equal(outcome.ok, true);
+      assert.equal(outcome.engine, "mymemory");
+      assert.equal(outcome.degraded, true);
+      assert.equal(outcome.results[0].text, "MM[hello world]");
+    }
+  );
+});
+
+console.log("\n[3] MyMemory / Lingva · 真实请求（独立于 Google 限流面）");
+
+await test("MyMemory 批量 3 条等长同序", async () => {
+  const engine = new MyMemoryEngine();
+  const texts = ["Read the docs.", "The Old Lighthouse.", "Where are you going tomorrow?"];
+  const results = await engine.translate(texts, "en", "zh-CN");
+  assert.equal(results.length, 3);
+  results.forEach(r => assert.ok(/[\u4e00-\u9fff]/.test(r.text), `应有中文: ${r.text}`));
+});
+
+await test("MyMemory 自动检测源语言", async () => {
+  const engine = new MyMemoryEngine();
+  const [result] = await engine.translate(["Where are you going tomorrow?"], "auto", "zh-CN");
+  assert.ok(/[\u4e00-\u9fff]/.test(result.text), `应有中文: ${result.text}`);
+  if (result.detected) assert.equal(result.detected, "en");
+});
+
+await test("Lingva 实例可达性（Node 指纹被 CF 拦时标记环境受限）", async () => {
+  const engine = new LingvaEngine();
+  const [result] = await engine.translate(["Read the docs."], "en", "zh-CN");
+  assert.ok(/[\u4e00-\u9fff]/.test(result.text), `应有中文: ${result.text}`);
 });
 
 const failed = results.filter(r => !r.ok).length;

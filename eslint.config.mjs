@@ -82,6 +82,8 @@ export default [
         process: "readonly",
         URL: "readonly",
         console: "readonly",
+        // mock fetch 用的 fetch API 全局（Node 18+ 内置）
+        Response: "readonly",
       },
     },
   },

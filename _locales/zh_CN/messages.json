@@ -76,7 +76,7 @@
     "description": "默认目标语言说明"
   },
   "engineDesc": {
-    "message": "Google 免费接口开箱即用；Azure Translator 适合有订阅密钥的用户",
+    "message": "Google 免费接口开箱即用；MyMemory 与 Lingva 可作独立兜底；Azure Translator 适合有订阅密钥的用户",
     "description": "引擎说明"
   },
   "apiKeyLabel": {

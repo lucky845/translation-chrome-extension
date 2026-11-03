@@ -23,7 +23,12 @@
   "host_permissions": [
     "https://translate.googleapis.com/*",
     "https://edge.microsoft.com/*",
-    "https://api.cognitive.microsofttranslator.com/*"
+    "https://api.cognitive.microsofttranslator.com/*",
+    "https://api.mymemory.translated.net/*",
+    "https://lingva.ml/*",
+    "https://lingva.garudalinux.org/*",
+    "https://translate.plausibility.cloud/*",
+    "https://lingva.lunar.icu/*"
   ],
   "permissions": ["storage", "contextMenus", "activeTab"],
   "options_ui": {

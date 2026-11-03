@@ -146,7 +146,7 @@ export class GoogleEngine extends BaseEngine {
 /**
  * 可重试错误：限流、超时、网络中断、响应结构异常。
  */
-class RetryableError extends Error {
+export class RetryableError extends Error {
   constructor(message) {
     super(message);
     this.name = "RetryableError";
@@ -231,6 +231,286 @@ export class BingEngine extends BaseEngine {
 }
 
 /**
+ * MyMemory 免费翻译引擎（api.mymemory.translated.net）。
+ *
+ * 实测（2026-11）：免密钥、匿名 GET 即可用，支持源语言 "Autodetect"，
+ * 顶层返回 detectedLanguage 与 quotaFinished 字段。
+ * 限制：单条 ≤ 500 字节；匿名按 IP 限日配额、高频触发限流——因此逐条串行、
+ * 带节流间隔，超长文本按句拆片请求后拼接。
+ */
+export class MyMemoryEngine extends BaseEngine {
+  static ENDPOINT = "https://api.mymemory.translated.net/get";
+  // 单条请求的安全长度（MyMemory 官方上限 500 字节，取余量防 URL 编码膨胀）
+  static MAX_SEGMENT_CHARS = 450;
+  // 逐条请求节流：匿名配额宝贵，宁慢勿封
+  static THROTTLE_MS = 150;
+
+  /**
+   * 恒可用：免密钥。配额耗尽在请求时以错误形式暴露并走降级链。
+   * @return {Promise<boolean>}
+   */
+  async isAvailable() {
+    return true;
+  }
+
+  /**
+   * 语言码适配：MyMemory 用 "Autodetect" 表示自动检测，其余 ISO 码直传。
+   * @param {string} lang 语言码
+   * @return {string} MyMemory 语言码
+   */
+  static mapLang(lang) {
+    return lang === "auto" ? "Autodetect" : lang;
+  }
+
+  /**
+   * 批量翻译：逐条请求 + 节流。
+   * @param {string[]} texts 待翻译文本
+   * @param {string} fromLang 源语言
+   * @param {string} toLang 目标语言
+   * @return {Promise<Array<{text: string, detected: ?string}>>} 与输入等长同序
+   */
+  async translate(texts, fromLang, toLang) {
+    const from = MyMemoryEngine.mapLang(fromLang);
+    const to = MyMemoryEngine.mapLang(toLang);
+    const results = [];
+    for (let index = 0; index < texts.length; index++) {
+      if (index > 0) await sleep(MyMemoryEngine.THROTTLE_MS);
+      results.push(await this.translateOne(texts[index], from, to));
+    }
+    return results;
+  }
+
+  /**
+   * 翻译单条：超长文本按句拆片，逐片请求后拼接。
+   * @param {string} text 原文
+   * @param {string} from 源语言
+   * @param {string} to 目标语言
+   * @return {Promise<{text: string, detected: ?string}>}
+   */
+  async translateOne(text, from, to) {
+    const segments = splitSentences(text, MyMemoryEngine.MAX_SEGMENT_CHARS);
+    let detected = null;
+    const parts = [];
+    for (const segment of segments) {
+      const item = await this.requestSegment(segment, from, to);
+      parts.push(item.text);
+      if (item.detected) detected = item.detected;
+    }
+    return { text: parts.join(" "), detected };
+  }
+
+  /**
+   * 请求一片文本，带与 Google 引擎一致的重试策略。
+   * @param {string} segment 单片文本
+   * @param {string} from 源语言
+   * @param {string} to 目标语言
+   * @return {Promise<{text: string, detected: ?string}>}
+   */
+  async requestSegment(segment, from, to) {
+    const query = new URLSearchParams({
+      q: segment,
+      langpair: `${from}|${to}`,
+    });
+    let lastError = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+      try {
+        const response = await fetch(`${MyMemoryEngine.ENDPOINT}?${query.toString()}`, {
+          method: "GET",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+          if (response.status !== 429 && response.status >= 400 && response.status < 500) {
+            throw new FatalTranslationError(`MyMemory HTTP ${response.status}`);
+          }
+          throw new RetryableError(`MyMemory HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (!data || !data.responseData || typeof data.responseData.translatedText !== "string") {
+          throw new RetryableError("MyMemory 返回结构异常");
+        }
+        if (data.quotaFinished) {
+          throw new FatalTranslationError("MyMemory 匿名配额已耗尽（当日）");
+        }
+        if (data.responseStatus !== 200) {
+          throw new FatalTranslationError(`MyMemory responseStatus ${data.responseStatus}`);
+        }
+        return {
+          text: data.responseData.translatedText,
+          detected:
+            typeof data.detectedLanguage === "string" && data.detectedLanguage !== "" ? data.detectedLanguage : null,
+        };
+      } catch (error) {
+        if (error instanceof FatalTranslationError) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError || new RetryableError("MyMemory 请求失败");
+  }
+}
+
+/**
+ * Lingva 免费引擎：Google 翻译的开源前端镜像。
+ *
+ * 实测（2026-11）：curl 直接访问被 Cloudflare 质询页拦截（"Just a moment..."），
+ * 但插件跑在真实 Chrome 里带完整浏览器指纹，可通过 CF。
+ * 多实例轮换 + 记住上次成功实例；单实例失败换下一个，绝不静默返回原文。
+ */
+export class LingvaEngine extends BaseEngine {
+  // 实例池：社区镜像随时间涨落，全部失败时抛错走降级链
+  static INSTANCES = [
+    "https://lingva.ml",
+    "https://lingva.garudalinux.org",
+    "https://translate.plausibility.cloud",
+    "https://lingva.lunar.icu",
+  ];
+  // 单段安全长度：Lingva 走 URL path，编码后过长会 414
+  static MAX_SEGMENT_CHARS = 600;
+
+  /** @type {?string} 最近一次成功的实例，进程内复用 */
+  static preferredInstance = null;
+
+  /**
+   * 恒可用（免密钥）；实例级失败在请求时暴露。
+   * @return {Promise<boolean>}
+   */
+  async isAvailable() {
+    return true;
+  }
+
+  /**
+   * 批量翻译：逐条请求（实例池轮换），保持等长同序。
+   * @param {string[]} texts 待翻译文本
+   * @param {string} fromLang 源语言
+   * @param {string} toLang 目标语言
+   * @return {Promise<Array<{text: string, detected: ?string}>>}
+   */
+  async translate(texts, fromLang, toLang) {
+    const results = [];
+    for (let index = 0; index < texts.length; index++) {
+      if (index > 0) await sleep(MyMemoryEngine.THROTTLE_MS);
+      results.push(await this.translateOne(texts[index], fromLang, toLang));
+    }
+    return results;
+  }
+
+  /**
+   * 翻译单条：超长按句拆片后拼接。
+   * @param {string} text 原文
+   * @param {string} fromLang 源语言
+   * @param {string} toLang 目标语言
+   * @return {Promise<{text: string, detected: ?string}>}
+   */
+  async translateOne(text, fromLang, toLang) {
+    const segments = splitSentences(text, LingvaEngine.MAX_SEGMENT_CHARS);
+    const parts = [];
+    let detected = null;
+    for (const segment of segments) {
+      const item = await this.requestSegment(segment, fromLang, toLang);
+      parts.push(item.text);
+      if (item.detected) detected = item.detected;
+    }
+    return { text: parts.join(" "), detected };
+  }
+
+  /** 单片请求超时：实例池轮换最坏 4 × 此值，不能占满全局超时预算 */
+  static SEGMENT_TIMEOUT_MS = 8000;
+
+  /** Google 语言代码 → Lingva 语言代码（Lingva 用 zh / zh_HANT / pt 这类短码与下划线变体） */
+  static LANG_MAP = {
+    "zh-CN": "zh",
+    "zh-TW": "zh_HANT",
+    "zh-HK": "zh_HANT",
+    "pt-BR": "pt",
+    "pt-PT": "pt",
+  };
+
+  /**
+   * Google 风格 BCP-47 代码转 Lingva 代码：先查映射表，未命中则取主语言码。
+   * @param {string} lang Google 风格语言代码
+   * @return {string} Lingva 语言代码
+   */
+  static toLingvaLang(lang) {
+    if (LingvaEngine.LANG_MAP[lang]) return LingvaEngine.LANG_MAP[lang];
+    const main = String(lang).split("-")[0];
+    return main === "zh" ? "zh" : main;
+  }
+
+  /**
+   * 请求一片文本，先试偏好实例，失败轮换整个实例池。
+   * @param {string} segment 单片文本
+   * @param {string} fromLang 源语言（Google 风格，内部转 Lingva 码）
+   * @param {string} toLang 目标语言（Google 风格，内部转 Lingva 码）
+   * @return {Promise<{text: string, detected: ?string}>} detected 来自 Lingva 的 info.detectedSource
+   */
+  async requestSegment(segment, fromLang, toLang) {
+    const source = LingvaEngine.toLingvaLang(fromLang);
+    const target = LingvaEngine.toLingvaLang(toLang);
+    const candidates = [];
+    if (LingvaEngine.preferredInstance) candidates.push(LingvaEngine.preferredInstance);
+    for (const instance of LingvaEngine.INSTANCES) {
+      if (!candidates.includes(instance)) candidates.push(instance);
+    }
+
+    let lastError = null;
+    for (const instance of candidates) {
+      const url = `${instance}/api/v1/${encodeURIComponent(source)}/${encodeURIComponent(target)}/${encodeURIComponent(segment)}`;
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(LingvaEngine.SEGMENT_TIMEOUT_MS) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (!data || typeof data.translation !== "string") throw new Error("返回结构异常");
+        LingvaEngine.preferredInstance = instance;
+        const infoSource = data.info && data.info.detectedSource;
+        return {
+          text: data.translation,
+          detected: typeof infoSource === "string" && infoSource !== "" ? infoSource : null,
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new RetryableError(`Lingva 全部实例失败：${lastError ? lastError.message : "未知"}`);
+  }
+}
+
+/**
+ * 按句边界把长文本拆成不超过 maxChars 的片段（句子尽量完整，超长单句硬切）。
+ * 导出供单元测试。
+ * @param {string} text 原文
+ * @param {number} maxChars 单片字符上限
+ * @return {string[]} 片段数组（拼接顺序与原文一致）
+ */
+export function splitSentences(text, maxChars) {
+  if (!text || text.length <= maxChars) return text ? [text] : [];
+  // 中英文句末标点后跟空白或直接结束都视为句边界
+  const sentences = text.split(/(?<=[.!?。！？；;])\s*/);
+  const segments = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (sentence.length > maxChars) {
+      // 单句超限：硬切成固定长度的片
+      if (current) {
+        segments.push(current);
+        current = "";
+      }
+      for (let offset = 0; offset < sentence.length; offset += maxChars) {
+        segments.push(sentence.slice(offset, offset + maxChars));
+      }
+      continue;
+    }
+    if (current.length + sentence.length + 1 > maxChars) {
+      segments.push(current);
+      current = sentence;
+    } else {
+      current = current ? `${current} ${sentence}` : sentence;
+    }
+  }
+  if (current) segments.push(current);
+  return segments;
+}
+
+/**
  * 按请求体大小与条数切块。
  * @param {string[]} texts 全量文本
  * @return {string[][]} 分块结果
@@ -290,5 +570,7 @@ function sleep(ms) {
  */
 export function createEngine(name, apiKey = null) {
   if (name === "bing") return new BingEngine(apiKey);
+  if (name === "mymemory") return new MyMemoryEngine();
+  if (name === "lingva") return new LingvaEngine();
   return new GoogleEngine();
 }

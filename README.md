@@ -25,8 +25,13 @@
 
 | 引擎 | 状态 | 说明 |
 |------|------|------|
-| Google | ✅ 免费可用 | 默认引擎，无需配置 |
+| Google | ✅ 免费可用 | 默认引擎，无需配置，批量 200 条/请求 |
+| Lingva | ✅ 免费可用 | Google 翻译的开源前端，四实例池自动轮换；浏览器指纹可过其实例的 Cloudflare 防护 |
+| MyMemory | ✅ 免费可用 | 独立于 Google 基础设施，逐条串行限速；每日配额用尽时明确报错 |
 | Azure Translator | 🔑 需密钥 | 在选项页填入订阅密钥 |
+
+所有免费引擎构成自动降级链：**Google → Lingva → MyMemory**。
+当前引擎限流或不可用时自动切换下一个，状态栏标注「已降级」，绝不静默换引擎。
 
 > ⚠️ 旧版本的「Bing 免费端点」（`edge.microsoft.com/translate/auth`）已于 2026-11 实测失效
 > （返回 404/503）。本扩展不再将其作为可用引擎展示；已迁移为 Azure Translator 正式接口，
@@ -38,8 +43,8 @@
 background/
   service-worker.js   消息路由、快捷键、右键菜单
   settings.js         设置读写与缓存
-  engine.js           翻译引擎（Google 批量 / Azure），重试与超时
-  translator.js       编排：缓存、去重、引擎降级
+  engine.js           翻译引擎（Google / Lingva / MyMemory / Azure），重试与超时
+  translator.js       编排：缓存、去重、动态引擎降级链
 content/
   dom-core.js         DOM 采集、占位符编解码、无损还原（纯逻辑，可单测）
   content.js          状态机、批量调度、MutationObserver、UI

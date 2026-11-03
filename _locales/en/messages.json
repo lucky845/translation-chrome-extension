@@ -76,7 +76,7 @@
     "description": "Default target language description"
   },
   "engineDesc": {
-    "message": "Google's free endpoint works out of the box; Azure Translator suits users with a subscription key",
+    "message": "Google's free endpoint works out of the box; MyMemory and Lingva serve as independent fallbacks; Azure Translator suits users with a subscription key",
     "description": "Engine description"
   },
   "apiKeyLabel": {

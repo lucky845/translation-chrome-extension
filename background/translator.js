@@ -135,7 +135,13 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
 }
 
 /**
- * 执行一次批量请求，引擎不可用或失败时降级到 Google。
+ * 免密钥引擎的降级顺序。Google 被限流/不可达时依次后移，
+ * MyMemory 与 Lingva 独立于 Google 基础设施，可作为真实兜底。
+ */
+const FALLBACK_CHAIN = ["google", "lingva", "mymemory"];
+
+/**
+ * 执行一次批量请求，按降级链逐个尝试可用引擎。
  *
  * @param {string[]} texts 待翻译文本
  * @param {string} from 源语言
@@ -146,25 +152,32 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
 async function runWithFallback(texts, from, to, engineName) {
   const settings = await getSettings();
 
-  // Bing 未配置密钥时 isAvailable 为 false，直接降级，不做无意义的失败请求。
-  if (engineName !== "google") {
-    const primary = createEngine(engineName, settings.apiKey || null);
-    if (!(await primary.isAvailable())) {
-      const results = await createEngine("google").translate(texts, from, to);
-      return { results, engine: "google", degraded: true, error: `${engineName} 未配置密钥，已使用 Google` };
+  // 尝试序列：首选引擎在前，其余按固定链序去重
+  const chain = [engineName, ...FALLBACK_CHAIN.filter(name => name !== engineName)];
+  /** @type {string[]} */
+  const failures = [];
+
+  for (const name of chain) {
+    const engine = createEngine(name, settings.apiKey || null);
+    if (!(await engine.isAvailable())) {
+      failures.push(`${name}: 未配置`);
+      continue;
     }
     try {
-      const results = await primary.translate(texts, from, to);
-      return { results, engine: engineName, degraded: false, error: null };
+      const results = await engine.translate(texts, from, to);
+      const degraded = name !== engineName;
+      return {
+        results,
+        engine: name,
+        degraded,
+        error: degraded ? `已从 ${engineName} 降级到 ${name}` : null,
+      };
     } catch (error) {
-      if (error instanceof FatalTranslationError) throw error;
-      const results = await createEngine("google").translate(texts, from, to);
-      return { results, engine: "google", degraded: true, error: `${engineName} 失败，已降级到 Google` };
+      failures.push(`${name}: ${error.message}`);
     }
   }
 
-  const results = await createEngine("google").translate(texts, from, to);
-  return { results, engine: "google", degraded: false, error: null };
+  throw new FatalTranslationError(`所有引擎失败 → ${failures.join("; ")}`);
 }
 
 /**

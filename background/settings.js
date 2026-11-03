@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = {
   apiKey: "",
 };
 
-const VALID_ENGINES = ["google", "bing"];
+const VALID_ENGINES = ["google", "bing", "lingva", "mymemory"];
 
 let cache = null;
 
