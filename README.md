@@ -1,106 +1,127 @@
-# 网页翻译器 Chrome 扩展
+<div align="center">
 
-一款 Chrome 扩展，可让您一键将任何网页翻译成您偏好的语言。
+# 🌐 网页翻译
 
-## 功能特性
+**一键翻译整个网页，保留链接、图片与排版结构**
 
-- 一键翻译整个网页，保留页面原始格式和布局
-- 支持20多种语言的互译
-- 可随时恢复原始文本
-- 集成上下文菜单，支持快速翻译页面或选中文本
-- 源语言下拉框默认显示当前网页语言
-- 可配置默认目标语言
-- 支持多种翻译服务：Google翻译和Bing翻译（Microsoft翻译通过Bing翻译API实现）
-- 提供键盘快捷键（Alt+T）快速切换翻译状态
-- 支持翻译动态加载的内容
-- 支持多框架页面翻译
+Manifest V3 · 零构建 · 零运行时依赖
 
-## 安装方法
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
+![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-1. 克隆或下载此仓库
-2. 打开 Chrome 并进入 `chrome://extensions/`
-3. 在右上角启用"开发者模式"
-4. 点击"加载已解压的扩展程序"并选择扩展目录
+</div>
 
-## 使用方法
+<!-- TODO: 补一张翻译前后对比截图，放 docs/screenshot.png
+![截图](docs/screenshot.png) -->
 
-1. 点击工具栏中的扩展图标打开弹出窗口
-2. 源语言下拉框会自动显示当前网页语言，您也可以手动选择源语言
-3. 选择您的目标语言
-4. 点击"翻译页面"翻译当前网页
-5. 点击"显示原文"恢复到原始文本
-6. 使用上下文菜单选项翻译页面或选中文本
+## ✨ 功能特性
 
-## 配置说明
+### 翻译能力
 
-1. 点击弹出窗口中的"选项"按钮打开设置页面
-2. 选择您的默认目标语言
-3. （可选）输入您的 Google 翻译 API 密钥以获得更好的翻译效果
+- **🖥️ 整页翻译** — 按块级元素组织翻译单元，句子语序由引擎整体处理，中文输出不再是破碎词序
+- **🧬 结构保留** — `<a>`、`<b>`、`<img>` 等内联元素在译文中按目标语序重排，`href`/`class` 等属性完整保留
+- **🔄 无损恢复** — 一键还原原始页面，逐字节一致
+- **⚡ 动态内容** — MutationObserver 增量翻译新增内容（防抖 300ms，自触发抑制），SPA 路由切换也能跟上
+- **📦 批量请求** — 单次请求最多携带 200 条文本，实测约 1.4 秒
 
-## 支持的语言
+### 使用方式
 
-扩展支持30种语言的翻译，包括自动检测语言功能，完整语言列表如下：
+- **⌨️ 快捷键** `Alt+T` 切换翻译状态
+- **🖱️ 右键菜单** 翻译选中文本
+- **🤖 自动翻译** 页面语言与目标语言不同时自动翻译
+- **🌍 30 种语言**，中英双语界面
 
-- 自动检测 (auto)
-- 中文(简体) (zh-CN)
-- 中文(繁体) (zh-TW)
-- 英语 (en)
-- 日语 (ja)
-- 韩语 (ko)
-- 法语 (fr)
-- 德语 (de)
-- 西班牙语 (es)
-- 俄语 (ru)
-- 葡萄牙语 (pt)
-- 意大利语 (it)
-- 阿拉伯语 (ar)
-- 印地语 (hi)
-- 泰语 (th)
-- 越南语 (vi)
-- 印尼语 (id)
-- 马来语 (ms)
-- 波兰语 (pl)
-- 土耳其语 (tr)
-- 荷兰语 (nl)
-- 瑞典语 (sv)
-- 丹麦语 (da)
-- 芬兰语 (fi)
-- 挪威语 (no)
-- 匈牙利语 (hu)
-- 捷克语 (cs)
-- 罗马尼亚语 (ro)
-- 乌克兰语 (uk)
-- 希腊语 (el)
+## 📥 安装
 
-## 技术细节
+> 本扩展尚未发布到 Chrome Web Store，请以开发者模式加载。
 
-此扩展使用 Manifest V3 构建，遵循现代 Chrome 扩展实践：
+1. 克隆或下载本仓库
+2. 打开 `chrome://extensions/`
+3. 右上角开启「**开发者模式**」
+4. 点击「**加载已解压的扩展程序**」，选择本目录
 
-- **manifest.json**：扩展配置文件，定义权限、图标、弹出页面等
-- **background/background.js**：后台服务工作线程，处理翻译逻辑、API调用和消息传递
-- **contentScript/content.js**：在网页上运行的内容脚本，负责实际的页面翻译和状态管理
-- **popup/popup.html**：快速翻译操作的弹出 UI，提供翻译/恢复功能和设置入口
-- **options/options.html**：配置选项页面，允许用户设置默认语言和翻译服务
-- **_locales/**：国际化资源文件，支持多语言界面
-- **icons/**：扩展图标文件，包含四种不同尺寸
+## 🎯 使用
 
-## 开发说明
+| 操作 | 方式 |
+|------|------|
+| 翻译 / 恢复整页 | 点击工具栏图标，或按 <kbd>Alt</kbd>+<kbd>T</kbd> |
+| 翻译选中文本 | 选中文字 → 右键 → 翻译 |
+| 切换目标语言 / 引擎 | 工具栏弹窗或扩展「选项」页 |
 
-要修改扩展：
+## ⚙️ 翻译引擎
 
-1. 对相关文件进行更改
-2. 进入 `chrome://extensions/`
-3. 点击扩展卡片上的刷新图标
+| 引擎 | 状态 | 说明 |
+|------|------|------|
+| **Google** | ✅ 免费可用 | 默认引擎，无需配置，批量 200 条/请求 |
+| **MyMemory** | ✅ 实测可用 | 免密钥、独立于 Google 基础设施；Node 与真实 Chrome 内均实测 200。逐条串行限速，每日配额用尽时明确报错 |
+| **Lingva** | ⚠️ 可选 | Google 翻译开源前端，四实例池轮换。公共实例多在 Cloudflare 之后，**实例可用性因地区/网络而异**（2026-11 实测：部分网络下全部实例不可达），仅在手动选择或前序引擎全失败时使用 |
+| **Azure Translator** | 🔑 需密钥 | 在选项页填入订阅密钥 |
 
-## 限制说明
+**自动降级链**：`Google → MyMemory → Lingva`
 
-- 没有 API 密钥时，翻译为模拟翻译
-- 一些结构复杂的网页可能无法完美翻译
-- 页面加载后动态加载的内容可能不会自动翻译
+当前引擎限流或不可用时自动切换下一个，状态栏标注「已降级」，绝不静默换引擎。
 
-## 未来改进
+> [!WARNING]
+> 旧版本的「Bing 免费端点」（`edge.microsoft.com/translate/auth`）已于 2026-11 实测失效（返回 404/503）。
+> 本扩展不再将其作为可用引擎展示；已迁移为 Azure Translator 正式接口，需要用户自己的密钥。
+> 界面显示的引擎状态来自真实探测，不是写死文案。
 
-- 支持更多翻译服务
-- 改进动态内容处理
-- 翻译历史记录
-- 更好的用户界面和体验
+## 🧠 工作原理：块级翻译单元
+
+逐 TEXT 节点翻译是错误的做法——`Read the <a>docs</a> before you <b>start</b>.`
+拆成 5 段分别翻译，中文语序必然错乱。
+
+本扩展将每个叶子块编码为**一个翻译单元**：内联标签变成 `<0>…</0>` 占位符，
+整句交给引擎，返回后按占位符重建 DOM。实测 Google 会保留占位符并按目标语序重排：
+
+```text
+输入:  Read the <0>official docs</0> before you <1>start</1>.
+输出:  在<1>开始</1>之前阅读<0>官方文档</0>。
+```
+
+占位符完整性有校验：引擎若丢失任何占位符，该单元放弃应用、保留原文——
+**宁可少翻一段，绝不生成错乱 DOM 或把 `<a>` 渲染成字面文本。**
+
+## 🗂 项目结构
+
+```text
+background/
+  service-worker.js   消息路由、快捷键、右键菜单
+  settings.js         设置读写与缓存
+  engine.js           翻译引擎（Google / MyMemory / Lingva / Azure），重试与超时
+  translator.js       编排：缓存、去重、动态引擎降级链
+content/
+  dom-core.js         DOM 采集、占位符编解码、无损还原（纯逻辑，可单测）
+  content.js          状态机、批量调度、MutationObserver、UI
+popup/  options/      界面
+test/
+  dom.test.mjs        DOM 逻辑单测（jsdom）
+  manifest.test.mjs   静态完整性校验
+  engine.test.mjs     引擎单测（mock）+ 真实请求冒烟
+  e2e.mjs             真实 Chrome 端到端
+```
+
+## 🛠 开发
+
+```bash
+npm install
+npm test              # DOM 单测 + 静态完整性
+npm run test:engine   # 引擎单测（mock）+ 真实请求（需要网络）
+node test/e2e.mjs     # 真实 Chrome E2E（macOS + 本机 Chrome）
+npm run lint
+```
+
+E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`（有头模式）。
+
+## ⚠️ 已知限制
+
+- 仅注入主框架（`all_frames: false`），iframe 内内容由其自身页面负责
+- `pre`、`code`、表单控件、`contenteditable` 区域不翻译（设计如此）
+- Google 免费端点无官方 SLA，极端限流时返回明确错误而不是伪造结果
+
+## 📄 License
+
+[MIT](LICENSE)

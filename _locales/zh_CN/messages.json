@@ -1,118 +1,122 @@
 {
   "extensionName": {
-    "message": "网页翻译器",
-    "description": "The name of the extension"
+    "message": "网页翻译",
+    "description": "扩展名称"
   },
   "extensionDescription": {
-    "message": "一键将任何网页翻译成您偏好的语言",
-    "description": "The description of the extension"
-  },
-  "translatePageTitle": {
-    "message": "翻译此页面",
-    "description": "Title for the translate page context menu item"
-  },
-  "translateSelectedTextTitle": {
-    "message": "翻译选中文本",
-    "description": "Title for the translate selected text context menu item"
+    "message": "一键翻译整个网页：保留链接、图片与排版结构，支持 Google 免费接口与 Azure Translator",
+    "description": "扩展描述"
   },
   "popupTitle": {
-    "message": "网页翻译器",
-    "description": "Title shown in the popup window"
+    "message": "网页翻译",
+    "description": "弹窗标题"
   },
   "sourceLanguageLabel": {
-    "message": "源语言：",
-    "description": "Label for the source language dropdown"
+    "message": "源语言",
+    "description": "源语言下拉框标签"
   },
   "targetLanguageLabel": {
-    "message": "目标语言：",
-    "description": "Label for the target language dropdown"
+    "message": "目标语言",
+    "description": "目标语言下拉框标签"
+  },
+  "translationServiceLabel": {
+    "message": "翻译引擎",
+    "description": "引擎下拉框标签"
+  },
+  "autoTranslateLabel": {
+    "message": "自动翻译非目标语言页面",
+    "description": "自动翻译复选框标签"
+  },
+  "autoTranslateDesc": {
+    "message": "打开网页时，若页面语言与目标语言不同则自动翻译",
+    "description": "自动翻译说明"
   },
   "translateButton": {
     "message": "翻译页面",
-    "description": "Text for the translate button"
+    "description": "翻译按钮"
   },
   "restoreButton": {
     "message": "显示原文",
-    "description": "Text for the restore button"
+    "description": "恢复按钮"
   },
   "optionsButton": {
-    "message": "选项",
-    "description": "Text for the options button"
+    "message": "设置",
+    "description": "设置按钮"
+  },
+  "shortcutHint": {
+    "message": "快捷键 Alt+T 切换",
+    "description": "弹窗底部快捷键提示"
+  },
+  "commandToggleDescription": {
+    "message": "切换当前页面的翻译状态",
+    "description": "快捷键命令描述"
+  },
+  "translatePageTitle": {
+    "message": "翻译此页面",
+    "description": "右键菜单：翻译页面"
+  },
+  "translateSelectedTextTitle": {
+    "message": "翻译选中文本",
+    "description": "右键菜单：翻译选中文本"
+  },
+  "optionsPageTitle": {
+    "message": "网页翻译 · 设置",
+    "description": "设置页标题"
+  },
+  "optionsSubtitle": {
+    "message": "翻译整页网页，保留链接、图片与排版结构",
+    "description": "设置页副标题"
   },
   "defaultLanguageLabel": {
-    "message": "默认目标语言：",
-    "description": "Label for the default language dropdown in options"
+    "message": "默认目标语言",
+    "description": "默认目标语言标签"
   },
-  "translationServiceLabel": {
-    "message": "翻译服务：",
-    "description": "Label for the translation service dropdown in options"
+  "defaultLanguageDesc": {
+    "message": "点击「翻译页面」时使用的目标语言",
+    "description": "默认目标语言说明"
   },
-  "scrollTranslationLabel": {
-    "message": "默认启用滚动翻译",
-    "description": "Label for the scroll translation checkbox"
+  "engineDesc": {
+    "message": "Google 免费接口开箱即用；MyMemory 实测可用、独立兜底；Lingva 实例可用性因地区而异；Azure Translator 适合有订阅密钥的用户",
+    "description": "引擎说明"
   },
   "apiKeyLabel": {
-    "message": "Bing 翻译器 API 密钥（可选）：",
-    "description": "Label for the API key input field"
+    "message": "Azure Translator 密钥",
+    "description": "密钥输入框标签"
+  },
+  "apiKeyPlaceholder": {
+    "message": "粘贴 Azure Translator 资源的密钥",
+    "description": "密钥输入框占位符"
+  },
+  "apiKeyHint": {
+    "message": "在 Azure Portal 创建 Translator 资源后获取密钥。旧版 Bing 免费端点已于 2026-11 失效，因此本引擎必须配置密钥。",
+    "description": "密钥说明"
   },
   "saveSettingsButton": {
     "message": "保存设置",
-    "description": "Text for the save settings button"
+    "description": "保存按钮"
   },
   "settingsSaved": {
-    "message": "设置保存成功！",
-    "description": "Message shown when settings are saved"
-  },
-  "autoTranslateLabel": {
-    "message": "自动翻译英文页面",
-    "description": "自动翻译复选框的标签"
-  },
-  "usingGoogleTranslator": {
-    "message": "使用 Google 翻译（免费）",
-    "description": "Text shown when using Google Translate service"
-  },
-  "usingBingTranslator": {
-    "message": "使用 Bing 翻译（免费）",
-    "description": "Text shown when using Bing Translate service"
-  },
-  "optionsPageTitle": {
-    "message": "网页翻译器选项",
-    "description": "Title for the options page"
+    "message": "设置已保存",
+    "description": "保存成功提示"
   },
   "howToUseTitle": {
-    "message": "使用方法：",
-    "description": "Title for the how to use section"
+    "message": "使用方法",
+    "description": "使用说明标题"
   },
   "howToUseStep1": {
-    "message": "1. 点击工具栏中的扩展图标打开弹出窗口",
-    "description": "Step 1 of how to use instructions"
+    "message": "点击工具栏图标打开弹窗",
+    "description": "步骤 1"
   },
   "howToUseStep2": {
-    "message": "2. 选择您的目标语言",
-    "description": "Step 2 of how to use instructions"
+    "message": "选择目标语言与翻译引擎",
+    "description": "步骤 2"
   },
   "howToUseStep3": {
-    "message": "3. 点击\"翻译页面\"翻译当前网页",
-    "description": "Step 3 of how to use instructions"
+    "message": "点击「翻译页面」，或用快捷键 Alt+T 切换",
+    "description": "步骤 3"
   },
   "howToUseStep4": {
-    "message": "4. 点击\"显示原文\"恢复原文",
-    "description": "Step 4 of how to use instructions"
-  },
-  "apiKeyPlaceholder": {
-    "message": "输入您的 Bing 翻译器 API 密钥以获得更好的可靠性",
-    "description": "Placeholder text for the API key input field"
-  },
-  "autoDetectSourceLabel": {
-    "message": "自动检测源语言",
-    "description": "自动检测源语言复选框的标签"
-  },
-  "autoDetectSourceDesc": {
-    "message": "推荐开启以获得更好的翻译准确度",
-    "description": "自动检测源语言复选框的描述"
-  },
-  "apiKeyInstructions": {
-    "message": "<small>如果不提供 API 密钥，扩展程序将使用有限制的免费端点。</small>",
-    "description": "Instructions for API key field"
+    "message": "右键菜单可翻译选中的文本",
+    "description": "步骤 4"
   }
 }

@@ -1,158 +1,203 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title data-i18n="optionsPageTitle">Web Page Translator Options</title>
+  <title data-i18n="optionsPageTitle">网页翻译 · 设置</title>
   <style>
+    :root {
+      --bg: #f5f6f8;
+      --card: #ffffff;
+      --fg: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --ok: #047857;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
     body {
-      font-family: Arial, sans-serif;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f5f5f5;
+      margin: 0;
+      padding: 40px 16px;
+      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg);
     }
     .container {
-      background-color: white;
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 28px 32px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
     }
     h1 {
-      color: #333;
-      border-bottom: 1px solid #eee;
-      padding-bottom: 10px;
+      margin: 0 0 6px;
+      font-size: 20px;
+      font-weight: 600;
     }
-    .form-group {
-      margin-bottom: 20px;
+    .subtitle {
+      margin: 0 0 24px;
+      font-size: 13px;
+      color: var(--muted);
     }
+    .form-group { margin-bottom: 20px; }
     label {
       display: block;
-      margin-bottom: 5px;
-      font-weight: bold;
-      color: #555;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 500;
     }
-    select, input[type="text"] {
+    .desc {
+      margin: -2px 0 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    select, input[type="password"], input[type="text"] {
       width: 100%;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 16px;
+      padding: 9px 10px;
+      font-size: 14px;
+      color: var(--fg);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      outline: none;
     }
-    button {
-      background-color: #4285f4;
-      color: white;
-      border: none;
-      padding: 12px 20px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-    }
-    button:hover {
-      background-color: #3367d6;
-    }
-    .status {
-      padding: 10px;
-      border-radius: 4px;
-      margin: 10px 0;
-      display: none;
-    }
-    .status.success {
-      background-color: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
-    }
-    .instructions {
-      background-color: #e9ecef;
-      padding: 15px;
-      border-radius: 4px;
-      margin: 20px 0;
-    }
-    .service-settings {
-      display: none;
-    }
-    .service-settings.active {
-      display: block;
-    }
-    .checkbox-group {
+    select:focus, input:focus { border-color: var(--accent); }
+    .checkbox {
       display: flex;
-      align-items: center;
-      margin: 10px 0;
+      align-items: flex-start;
+      gap: 9px;
+      cursor: pointer;
     }
-    .checkbox-group input {
-      margin-right: 8px;
+    .checkbox input { margin-top: 3px; }
+    .checkbox .text strong { display: block; font-size: 13px; }
+    .checkbox .text span { font-size: 12px; color: var(--muted); }
+    #azure-settings { display: none; }
+    #azure-settings.active { display: block; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .hint a { color: var(--accent); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+    .actions { margin-top: 24px; }
+    button {
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .15s ease;
+    }
+    button:hover { background: var(--accent-hover); }
+    .status {
+      display: none;
+      margin-top: 14px;
+      padding: 9px 12px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+    .status.ok { color: var(--ok); background: #f0fdf4; border: 1px solid #d1fae5; }
+    .status.warn { color: var(--warn); background: #fffbeb; border: 1px solid #fef3c7; }
+    .engine-status {
+      margin-top: 10px;
+      padding: 9px 12px;
+      font-size: 12.5px;
+      border-radius: 8px;
+      background: #f9fafb;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+    .engine-status.ok { color: var(--ok); background: #f0fdf4; border-color: #d1fae5; }
+    .engine-status.warn { color: var(--warn); background: #fffbeb; border-color: #fef3c7; }
+    .howto {
+      margin-top: 28px;
+      padding: 16px 18px;
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .howto h2 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .howto ol {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .howto li { margin: 3px 0; }
+    kbd {
+      padding: 1px 5px;
+      font-size: 11px;
+      background: #eef0f2;
+      border: 1px solid #d1d5db;
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      font-family: inherit;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1 data-i18n="extensionName">Web Page Translator Settings</h1>
-    
-    <div class="instructions">
-      <h3 data-i18n="howToUseTitle">How to use:</h3>
-      <p data-i18n="howToUseStep1">1. Click the extension icon in the toolbar to open the popup</p>
-      <p data-i18n="howToUseStep2">2. Select your target language</p>
-      <p data-i18n="howToUseStep3">3. Click "Translate Page" to translate the current webpage</p>
-      <p data-i18n="howToUseStep4">4. Click "Show Original" to revert to the original text</p>
-    </div>
-    
-    <div class="form-group">
-      <label for="default-language" data-i18n="defaultLanguageLabel">Default Target Language:</label>
-      <select id="default-language">
-        <option value="en">English</option>
-        <option value="zh-CN">Chinese (Simplified)</option>
-        <option value="zh-TW">Chinese (Traditional)</option>
-        <option value="ja">Japanese</option>
-        <option value="ko">Korean</option>
-        <option value="fr">French</option>
-        <option value="de">German</option>
-        <option value="es">Spanish</option>
-        <option value="ru">Russian</option>
-        <option value="pt">Portuguese</option>
-        <option value="it">Italian</option>
-        <option value="ar">Arabic</option>
-        <option value="hi">Hindi</option>
-        <option value="th">Thai</option>
-        <option value="vi">Vietnamese</option>
-        <option value="id">Indonesian</option>
-        <option value="ms">Malay</option>
-        <option value="pl">Polish</option>
-        <option value="tr">Turkish</option>
-        <option value="nl">Dutch</option>
-        <option value="sv">Swedish</option>
-        <option value="da">Danish</option>
-        <option value="fi">Finnish</option>
-        <option value="no">Norwegian</option>
-        <option value="hu">Hungarian</option>
-        <option value="cs">Czech</option>
-        <option value="ro">Romanian</option>
-        <option value="uk">Ukrainian</option>
-        <option value="el">Greek</option>
-      </select>
-    </div>
-    
-    <div class="form-group">
-      <label for="translation-service" data-i18n="translationServiceLabel">Translation Service:</label>
-      <select id="translation-service">
-        <option value="google">Google Translate (Free)</option>
-        <option value="bing">Bing Translator (Free)</option>
-      </select>
-    </div>
-    
-    <div id="bing-settings" class="service-settings">
-      <div class="form-group">
-        <label for="api-key" data-i18n="apiKeyLabel">Bing Translator API Key (Optional):</label>
-        <input type="text" id="api-key" data-i18n-placeholder="apiKeyPlaceholder">
-        <p data-i18n="apiKeyInstructions"><small>If no API key is provided, the extension will use the free endpoint with limitations.</small></p>
-      </div>
-    </div>
-    
+    <h1 data-i18n="extensionName">网页翻译</h1>
+    <p class="subtitle" data-i18n="optionsSubtitle">翻译整页网页，保留链接、图片与排版结构</p>
 
-    
-    <button id="save-btn" data-i18n="saveSettingsButton">Save Settings</button>
-    
-    <div id="status" class="status" data-i18n="settingsSaved"></div>
+    <div class="form-group">
+      <label for="target-language" data-i18n="defaultLanguageLabel">默认目标语言</label>
+      <p class="desc" data-i18n="defaultLanguageDesc">点击「翻译页面」时使用的目标语言</p>
+      <select id="target-language"></select>
+    </div>
+
+    <div class="form-group">
+      <label for="engine" data-i18n="translationServiceLabel">翻译引擎</label>
+      <p class="desc" data-i18n="engineDesc">Google 免费接口开箱即用；MyMemory 实测可用、独立兜底；Lingva 实例可用性因地区而异；Azure Translator 适合有订阅密钥的用户</p>
+      <select id="engine">
+        <option value="google">Google（免费）</option>
+        <option value="lingva">Lingva（Google 镜像，实例可用性因地区而异）</option>
+        <option value="mymemory">MyMemory（免密钥，有日配额）</option>
+        <option value="bing">Azure Translator（需密钥）</option>
+      </select>
+      <div class="engine-status" id="engine-status">检测引擎状态…</div>
+    </div>
+
+    <div class="form-group" id="azure-settings">
+      <label for="api-key" data-i18n="apiKeyLabel">Azure Translator 密钥</label>
+      <input type="password" id="api-key" data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
+      <p class="hint" data-i18n="apiKeyHint">在 <a href="https://portal.azure.com" target="_blank" rel="noreferrer">Azure Portal</a> 创建 Translator 资源后获取密钥。旧版 Bing 免费端点已于 2026-11 失效，因此本引擎必须配置密钥。</p>
+    </div>
+
+    <div class="form-group">
+      <label class="checkbox">
+        <input type="checkbox" id="auto-translate">
+        <span class="text">
+          <strong data-i18n="autoTranslateLabel">自动翻译非目标语言页面</strong>
+          <span data-i18n="autoTranslateDesc">打开网页时，若页面语言与目标语言不同则自动翻译</span>
+        </span>
+      </label>
+    </div>
+
+    <div class="actions">
+      <button id="save-btn" data-i18n="saveSettingsButton">保存设置</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="howto">
+      <h2 data-i18n="howToUseTitle">使用方法</h2>
+      <ol>
+        <li data-i18n="howToUseStep1">点击工具栏图标打开弹窗</li>
+        <li data-i18n="howToUseStep2">选择目标语言与翻译引擎</li>
+        <li data-i18n="howToUseStep3">点击「翻译页面」，或用快捷键 <kbd>Alt+T</kbd> 切换</li>
+        <li data-i18n="howToUseStep4">右键菜单可翻译选中的文本</li>
+      </ol>
+    </div>
   </div>
-  
+
   <script src="options.js"></script>
 </body>
 </html>

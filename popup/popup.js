@@ -1,205 +1,291 @@
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("Popup loaded");
-  // 获取DOM元素
-  const translateBtn = document.getElementById("translate-btn");
-  const restoreBtn = document.getElementById("restore-btn");
-  const optionsBtn = document.getElementById("options-btn");
-  const sourceLanguageSelect = document.getElementById("source-language-select");
-  const languageSelect = document.getElementById("language-select");
-  const serviceSelect = document.getElementById("service-select");
-  const serviceInfo = document.getElementById("service-info");
-  const autoTranslateCheckbox = document.getElementById("auto-translate-checkbox");
+/**
+ * Popup 界面逻辑。
+ *
+ * 原则：界面上显示的每一个状态都必须来自真实查询，不做乐观假设。
+ * 旧实现点击翻译后立刻把按钮切成"已翻译"，翻译失败用户也无从得知——这里不允许。
+ */
+(function () {
+  "use strict";
 
-  // 获取当前页面的语言并设置为源语言下拉框的默认值
-  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-    if (tabs.length > 0) {
-      chrome.tabs.sendMessage(tabs[0].id, { action: "getPageLanguage" }, response => {
-        if (response && response.language) {
-          console.log("Current page language:", response.language);
-          // 设置源语言下拉框的值，如果匹配的选项存在
-          if (sourceLanguageSelect.querySelector(`option[value="${response.language}"]`)) {
-            sourceLanguageSelect.value = response.language;
-          }
-        }
-      });
+  const LANGS = [
+    ["zh-CN", "中文（简体）"],
+    ["zh-TW", "中文（繁体）"],
+    ["en", "英语"],
+    ["ja", "日语"],
+    ["ko", "韩语"],
+    ["fr", "法语"],
+    ["de", "德语"],
+    ["es", "西班牙语"],
+    ["ru", "俄语"],
+    ["pt", "葡萄牙语"],
+    ["it", "意大利语"],
+    ["ar", "阿拉伯语"],
+    ["hi", "印地语"],
+    ["th", "泰语"],
+    ["vi", "越南语"],
+    ["id", "印尼语"],
+    ["ms", "马来语"],
+    ["pl", "波兰语"],
+    ["tr", "土耳其语"],
+    ["nl", "荷兰语"],
+    ["sv", "瑞典语"],
+    ["da", "丹麦语"],
+    ["fi", "芬兰语"],
+    ["no", "挪威语"],
+    ["hu", "匈牙利语"],
+    ["cs", "捷克语"],
+    ["ro", "罗马尼亚语"],
+    ["uk", "乌克兰语"],
+    ["el", "希腊语"],
+  ];
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  /**
+   * 初始化。
+   * @return {Promise<void>}
+   */
+  async function init() {
+    const els = {
+      source: document.getElementById("source-language"),
+      target: document.getElementById("target-language"),
+      engine: document.getElementById("engine"),
+      auto: document.getElementById("auto-translate"),
+      translateBtn: document.getElementById("translate-btn"),
+      restoreBtn: document.getElementById("restore-btn"),
+      status: document.getElementById("status"),
+      engineInfo: document.getElementById("engine-info"),
+      optionsBtn: document.getElementById("options-btn"),
+    };
+
+    fillSelect(els.source, LANGS, true);
+    fillSelect(els.target, LANGS, false);
+    applyI18n();
+
+    await loadSettings(els);
+    await refreshPageState(els);
+
+    els.engine.addEventListener("change", async () => {
+      await saveSettings({ engine: els.engine.value });
+      await checkEngine(els);
+    });
+
+    els.target.addEventListener("change", () => saveSettings({ targetLanguage: els.target.value }));
+    els.source.addEventListener("change", () => saveSettings({ sourceLanguage: els.source.value }));
+    els.auto.addEventListener("change", () => saveSettings({ autoTranslate: els.auto.checked }));
+
+    els.translateBtn.addEventListener("click", () => runAction(els, "translatePage"));
+    els.restoreBtn.addEventListener("click", () => runAction(els, "restorePage"));
+    els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
+
+    await checkEngine(els);
+  }
+
+  /**
+   * 填充语言下拉。
+   * @param {HTMLSelectElement} select 下拉
+   * @param {Array<Array<string>>} langs 语言表
+   * @param {boolean} withAuto 是否加入"自动检测"
+   */
+  function fillSelect(select, langs, withAuto) {
+    const options = withAuto ? [["auto", "自动检测"]].concat(langs) : langs;
+    select.replaceChildren(
+      ...options.map(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        return option;
+      })
+    );
+  }
+
+  /**
+   * 读取设置并回填界面。
+   * @param {Object} els 元素表
+   * @return {Promise<void>}
+   */
+  async function loadSettings(els) {
+    const stored = await chrome.storage.sync.get({
+      targetLanguage: "zh-CN",
+      sourceLanguage: "auto",
+      engine: "google",
+      autoTranslate: false,
+    });
+
+    els.target.value = stored.targetLanguage;
+    els.source.value = stored.sourceLanguage;
+    els.engine.value = stored.engine;
+    els.auto.checked = Boolean(stored.autoTranslate);
+  }
+
+  /**
+   * 保存设置。
+   * @param {Object} patch 变更字段
+   * @return {Promise<void>}
+   */
+  async function saveSettings(patch) {
+    await chrome.storage.sync.set(patch);
+  }
+
+  /**
+   * 查询当前标签页的翻译状态并同步按钮。
+   * @param {Object} els 元素表
+   * @return {Promise<void>}
+   */
+  async function refreshPageState(els) {
+    const tab = await activeTab();
+    if (!tab || !tab.id) {
+      setStatus(els, "当前页面不支持翻译", "warn");
+      setButtons(els, false);
+      return;
     }
-  });
 
-  // 加载保存的设置
-  chrome.storage.sync.get(["targetLanguage", "sourceLanguage", "translationService", "autoTranslate"], result => {
-    console.log("Loaded settings:", result);
-    if (result.targetLanguage) {
-      languageSelect.value = result.targetLanguage;
+    const status = await sendToTab(tab.id, { action: "getStatus" });
+    if (!status) {
+      setStatus(els, "当前页面不支持翻译（请在普通网页上使用）", "warn");
+      setButtons(els, false);
+      return;
     }
 
-    if (result.sourceLanguage) {
-      sourceLanguageSelect.value = result.sourceLanguage;
-    }
-
-    if (result.translationService) {
-      serviceSelect.value = result.translationService;
-    }
-
-    if (typeof result.autoTranslate === "boolean") {
-      autoTranslateCheckbox.checked = result.autoTranslate;
-    }
-
-    // 更新服务信息显示
-    updateServiceInfo();
-
-    // 加载国际化文本
-    loadTranslations();
-  });
-
-  // 检查当前页面的翻译状态并更新按钮样式
-  checkPageTranslationState();
-
-  // 监听服务选择变化
-  serviceSelect.addEventListener("change", () => {
-    updateServiceInfo();
-  });
-
-  // 更新服务信息显示的函数
-  function updateServiceInfo() {
-    if (serviceSelect.value === "bing") {
-      serviceInfo.textContent = chrome.i18n.getMessage("usingBingTranslator") || "Using Bing Translator (Free)";
-    } else {
-      serviceInfo.textContent = chrome.i18n.getMessage("usingGoogleTranslator") || "Using Google Translate (Free)";
+    setButtons(els, status.state === "translated");
+    if (status.degraded && status.error) {
+      setStatus(els, status.error, "warn");
     }
   }
 
-  // 更新按钮样式
-  function updateButtonStyles(isTranslated) {
-    if (isTranslated) {
-      // 已翻译状态：翻译按钮置灰，查看原文按钮置蓝
-      translateBtn.classList.add("restore");
-      translateBtn.classList.remove("active");
-      restoreBtn.classList.remove("restore");
-      restoreBtn.classList.add("active");
+  /**
+   * 执行翻译/恢复动作。
+   * @param {Object} els 元素表
+   * @param {string} action 动作
+   * @return {Promise<void>}
+   */
+  async function runAction(els, action) {
+    const tab = await activeTab();
+    if (!tab || !tab.id) {
+      setStatus(els, "当前页面不支持翻译", "warn");
+      return;
+    }
+
+    setBusy(els, true);
+    setStatus(els, action === "translatePage" ? "正在翻译…" : "正在恢复…", "info");
+
+    const result = await sendToTab(tab.id, { action: action });
+    setBusy(els, false);
+
+    if (!result) {
+      setStatus(els, "当前页面不支持翻译（请在普通网页上使用）", "warn");
+      return;
+    }
+
+    if (action === "translatePage") {
+      if (result.success) {
+        setStatus(els, `已翻译 ${result.count} 处文本`, "ok");
+        setButtons(els, true);
+      } else {
+        setStatus(els, result.error || "翻译失败", "warn");
+        setButtons(els, false);
+      }
     } else {
-      // 未翻译状态：翻译按钮置蓝，查看原文按钮置灰
-      translateBtn.classList.remove("restore");
-      translateBtn.classList.add("active");
-      restoreBtn.classList.add("restore");
-      restoreBtn.classList.remove("active");
+      setStatus(els, `已恢复 ${result.count || 0} 处原文`, "ok");
+      setButtons(els, false);
     }
   }
 
-  // 加载国际化翻译
-  function loadTranslations() {
+  /**
+   * 探测引擎真实可用性并显示。
+   * @param {Object} els 元素表
+   * @return {Promise<void>}
+   */
+  async function checkEngine(els) {
+    els.engineInfo.textContent = "检测引擎状态…";
+    try {
+      const response = await chrome.runtime.sendMessage({ action: "getEngineStatus" });
+      const engines = (response && response.engines) || {};
+      const current = els.engine.value;
+      const info = engines[current];
+      if (info && info.available) {
+        els.engineInfo.textContent = current === "google" ? "Google 免费接口 · 可用" : "Azure 翻译 · 可用";
+        els.engineInfo.className = "engine-info ok";
+      } else {
+        els.engineInfo.textContent = (info && info.reason) || "当前引擎不可用";
+        els.engineInfo.className = "engine-info warn";
+      }
+    } catch (error) {
+      els.engineInfo.textContent = "引擎状态检测失败：" + (error.message || error);
+      els.engineInfo.className = "engine-info warn";
+    }
+  }
+
+  /**
+   * 应用 chrome.i18n 文案（popup 是传统脚本，无法用 ESM 共享，就地实现）。
+   */
+  function applyI18n() {
     document.querySelectorAll("[data-i18n]").forEach(element => {
       const key = element.getAttribute("data-i18n");
-      const translation = chrome.i18n.getMessage(key);
-      if (translation) {
-        element.textContent = translation;
-      }
+      const text = key && chrome.i18n.getMessage(key);
+      if (text) element.textContent = text;
     });
   }
 
-  // 检查页面翻译状态
-  function checkPageTranslationState() {
-    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-      if (tabs.length > 0) {
-        chrome.tabs.sendMessage(tabs[0].id, { action: "getTranslationState" }, response => {
+  /**
+   * 获取当前活动标签页。
+   * @return {Promise<?Object>} 标签页
+   */
+  async function activeTab() {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs && tabs[0];
+  }
+
+  /**
+   * 向标签页发消息，失败时返回 null。
+   * @param {number} tabId 标签页 id
+   * @param {Object} message 消息
+   * @return {Promise<?Object>} 响应
+   */
+  function sendToTab(tabId, message) {
+    return new Promise(resolve => {
+      try {
+        chrome.tabs.sendMessage(tabId, message, response => {
           if (chrome.runtime.lastError) {
-            console.log("Error checking translation state, assuming not translated");
-            updateButtonStyles(false);
+            resolve(null);
             return;
           }
-
-          if (response && response.isTranslated) {
-            updateButtonStyles(true);
-          } else {
-            updateButtonStyles(false);
-          }
+          resolve(response || null);
         });
+      } catch {
+        resolve(null);
       }
     });
   }
 
-  // 自动翻译复选框事件
-  autoTranslateCheckbox.addEventListener("change", () => {
-    console.log("Auto-translate setting changed:", autoTranslateCheckbox.checked);
-    chrome.storage.sync.set(
-      {
-        autoTranslate: autoTranslateCheckbox.checked,
-      },
-      () => {
-        console.log("Auto-translate setting saved");
-      }
-    );
-  });
+  /**
+   * 设置按钮状态。
+   * @param {Object} els 元素表
+   * @param {boolean} translated 是否已翻译
+   */
+  function setButtons(els, translated) {
+    els.translateBtn.disabled = translated;
+    els.restoreBtn.disabled = !translated;
+  }
 
-  // 源语言选择事件
-  sourceLanguageSelect.addEventListener("change", () => {
-    console.log("Source language setting changed:", sourceLanguageSelect.value);
-    chrome.storage.sync.set(
-      {
-        sourceLanguage: sourceLanguageSelect.value,
-      },
-      () => {
-        console.log("Source language setting saved");
-      }
-    );
-  });
+  /**
+   * 忙碌态。
+   * @param {Object} els 元素表
+   * @param {boolean} busy 是否忙碌
+   */
+  function setBusy(els, busy) {
+    els.translateBtn.disabled = busy;
+    els.restoreBtn.disabled = busy;
+  }
 
-  // 翻译按钮事件
-  translateBtn.addEventListener("click", () => {
-    console.log("Translate button clicked");
-    const sourceLanguage = sourceLanguageSelect.value;
-    const targetLanguage = languageSelect.value;
-    const translationService = serviceSelect.value;
-    const autoTranslate = autoTranslateCheckbox.checked;
-
-    // 保存设置
-    chrome.storage.sync.set(
-      {
-        sourceLanguage: sourceLanguage,
-        targetLanguage: targetLanguage,
-        translationService: translationService,
-        autoTranslate: autoTranslate,
-      },
-      () => {
-        console.log("Settings saved");
-
-        // 发送翻译消息到内容脚本
-        chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-          console.log("Sending translatePage message to tab:", tabs[0]);
-
-          // 发送翻译消息
-          chrome.tabs.sendMessage(tabs[0].id, { action: "translatePage" }, response => {
-            console.log("Translate message sent, response:", response);
-            if (chrome.runtime.lastError) {
-              console.error("Error sending translate message:", chrome.runtime.lastError);
-            } else {
-              // 更新按钮样式为已翻译状态
-              updateButtonStyles(true);
-            }
-          });
-        });
-      }
-    );
-  });
-
-  // 恢复按钮事件
-  restoreBtn.addEventListener("click", () => {
-    console.log("Restore button clicked");
-    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-      chrome.tabs.sendMessage(tabs[0].id, { action: "restorePage" }, response => {
-        console.log("Restore message sent, response:", response);
-        if (chrome.runtime.lastError) {
-          console.error("Error sending restore message:", chrome.runtime.lastError);
-        } else {
-          // 更新按钮样式为未翻译状态
-          updateButtonStyles(false);
-        }
-      });
-    });
-  });
-
-  // 选项按钮事件
-  optionsBtn.addEventListener("click", () => {
-    console.log("Options button clicked");
-    chrome.runtime.openOptionsPage();
-  });
-});
+  /**
+   * 状态提示。
+   * @param {Object} els 元素表
+   * @param {string} text 文本
+   * @param {string} kind 类型 ok/warn/info
+   */
+  function setStatus(els, text, kind) {
+    els.status.textContent = text;
+    els.status.className = "status " + kind;
+  }
+})();
