@@ -135,10 +135,14 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
 }
 
 /**
- * 免密钥引擎的降级顺序。Google 被限流/不可达时依次后移，
- * MyMemory 与 Lingva 独立于 Google 基础设施，可作为真实兜底。
+ * 免密钥引擎的降级顺序。Google 被限流/不可达时依次后移。
+ *
+ * MyMemory 排第二：2026-11 实测（Node 直连 + 真实 Chrome 页面上下文均 200）
+ * 且独立于 Google 基础设施，是当前唯一实证可靠的兜底。
+ * Lingva 排末位：其公共实例多在 Cloudflare 之后，部分地区网络下整体不可达
+ * （实例池轮换最坏 4×8s），放在前面会拖慢真正可用的兜底。
  */
-const FALLBACK_CHAIN = ["google", "lingva", "mymemory"];
+const FALLBACK_CHAIN = ["google", "mymemory", "lingva"];
 
 /**
  * 执行一次批量请求，按降级链逐个尝试可用引擎。

@@ -279,7 +279,7 @@ await test("Lingva：全部实例失败抛 Retryable（留给降级链）", asyn
   );
 });
 
-await test("降级链：Google 与 Lingva 全挂时 MyMemory 兜底", async () => {
+await test("降级链：Google 挂时先走 MyMemory，Lingva 不被触碰（链序实证）", async () => {
   // translator.js 依赖 chrome.storage，Node 环境 stub 之
   globalThis.chrome = {
     storage: {
@@ -288,8 +288,10 @@ await test("降级链：Google 与 Lingva 全挂时 MyMemory 兜底", async () =
     },
   };
   const { translateTexts } = await import("../background/translator.js");
+  const callOrder = [];
   await withMockFetch(
     url => {
+      callOrder.push(new URL(url).host);
       if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
       if (url.includes("lingva")) return new Response("down", { status: 503 });
       if (url.includes("api.mymemory.translated.net")) {
@@ -312,6 +314,16 @@ await test("降级链：Google 与 Lingva 全挂时 MyMemory 兜底", async () =
       assert.equal(outcome.engine, "mymemory");
       assert.equal(outcome.degraded, true);
       assert.equal(outcome.results[0].text, "MM[hello world]");
+      assert.ok(
+        !callOrder.some(host => host.includes("lingva")),
+        `Lingva 不应被调用，实际调用序: ${callOrder.join(",")}`
+      );
+      const firstMemory = callOrder.indexOf("api.mymemory.translated.net");
+      assert.ok(firstMemory > 0, "MyMemory 应被调用");
+      assert.ok(
+        callOrder.slice(0, firstMemory).every(host => host === "translate.googleapis.com"),
+        `MyMemory 之前只应尝试 Google（含 429 重试），实际: ${callOrder.join(",")}`
+      );
     }
   );
 });
