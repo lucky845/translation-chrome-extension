@@ -220,47 +220,47 @@
   }
 
   /**
-   * 探测引擎真实可用性并显示。
+   * 显示引擎状态（不阻断弹窗初始化）。
    * @param {Object} els 元素表
    * @return {Promise<void>}
    */
   async function checkEngine(els) {
-    els.engineInfo.textContent = "检测引擎状态…";
     try {
-      const response = await chrome.runtime.sendMessage({ action: "getEngineStatus" });
-      const engines = (response && response.engines) || {};
-      const current = els.engine.value;
-      const info = engines[current];
-      if (info && info.reason) {
-        if (current === "google") {
-          els.engineInfo.textContent = "Google 免费接口 · " + info.reason;
-        } else if (current === "mymemory") {
-          els.engineInfo.textContent = "MyMemory 免费接口 · " + info.reason;
-        } else if (current === "lingva") {
-          els.engineInfo.textContent = "Lingva 免费接口 · " + info.reason;
-        } else if (current === "bing") {
-          els.engineInfo.textContent = info.reason;
-        } else {
-          els.engineInfo.textContent = info.reason;
-        }
-        els.engineInfo.className = "engine-info warn";
+      if (!els || !els.engineInfo) return;
+      const current = els.engine && els.engine.value;
+      if (current === "mymemory") {
+        els.engineInfo.textContent = "MyMemory 免费接口 · 可直接尝试翻译";
+      } else if (current === "lingva") {
+        els.engineInfo.textContent = "Lingva 免费接口 · 可直接尝试翻译";
+      } else if (current === "bing") {
+        els.engineInfo.textContent = "Azure 翻译 · 需密钥";
+      } else if (current === "google") {
+        els.engineInfo.textContent = "Google 免费接口 · 可直接尝试翻译";
       } else {
-        if (current === "google") {
-          els.engineInfo.textContent = "Google 免费接口 · 可用";
-        } else if (current === "mymemory") {
-          els.engineInfo.textContent = "MyMemory 免费接口 · 可用";
-        } else if (current === "lingva") {
-          els.engineInfo.textContent = "Lingva 免费接口 · 可用";
-        } else if (current === "bing") {
-          els.engineInfo.textContent = "Azure 翻译 · 可用";
-        } else {
-          els.engineInfo.textContent = "引擎可用";
-        }
-        els.engineInfo.className = "engine-info ok";
+        els.engineInfo.textContent = "可直接尝试翻译";
       }
-    } catch (error) {
-      els.engineInfo.textContent = "引擎状态检测失败：" + (error.message || error);
       els.engineInfo.className = "engine-info warn";
+      // 异步探测，不阻断 UI
+      try {
+        const response = await Promise.race([
+          chrome.runtime.sendMessage({ action: "getEngineStatus" }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 800)),
+        ]);
+        const engines = (response && response.engines) || {};
+        const info = engines[current];
+        if (info && info.reason) {
+          if (current === "google") els.engineInfo.textContent = "Google 免费接口 · " + info.reason;
+          else if (current === "mymemory") els.engineInfo.textContent = "MyMemory 免费接口 · " + info.reason;
+          else if (current === "lingva") els.engineInfo.textContent = "Lingva 免费接口 · " + info.reason;
+          else if (current === "bing") els.engineInfo.textContent = info.reason;
+          else els.engineInfo.textContent = info.reason;
+          els.engineInfo.className = "engine-info warn";
+        }
+      } catch {
+        // 静默忽略探测失败
+      }
+    } catch {
+      // 完全静默
     }
   }
 
