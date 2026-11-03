@@ -317,6 +317,12 @@ export class MyMemoryEngine extends BaseEngine {
       try {
         const response = await fetch(`${MyMemoryEngine.ENDPOINT}?${query.toString()}`, {
           method: "GET",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://mymemory.translated.net/",
+            "Origin": "https://mymemory.translated.net",
+          },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!response.ok) {
