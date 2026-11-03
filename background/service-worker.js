@@ -137,28 +137,28 @@ async function engineAvailability(settings) {
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "google");
     if (!probe.ok) {
-      status.google.reason = probe.error || "网络可能受限（直连 Google 在国内常被拦截）";
+      status.google.reason = probe.error || "Google 探测失败（可直接尝试翻译）";
     }
   } catch (error) {
-    status.google.reason = "网络可能受限（直连 Google 在国内常被拦截）";
+    status.google.reason = "Google 探测失败（可直接尝试翻译）";
   }
 
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "mymemory");
     if (!probe.ok) {
-      status.mymemory.reason = probe.error || "网络可能受限";
+      status.mymemory.reason = probe.error || "MyMemory 探测失败（可直接尝试翻译）";
     }
   } catch (error) {
-    status.mymemory.reason = "网络可能受限";
+    status.mymemory.reason = "MyMemory 探测失败（可直接尝试翻译）";
   }
 
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "lingva");
     if (!probe.ok) {
-      status.lingva.reason = probe.error || "网络可能受限";
+      status.lingva.reason = probe.error || "Lingva 探测失败（可直接尝试翻译）";
     }
   } catch (error) {
-    status.lingva.reason = "网络可能受限";
+    status.lingva.reason = "Lingva 探测失败（可直接尝试翻译）";
   }
 
   return status;
