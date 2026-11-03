@@ -61,7 +61,25 @@ const handlers = {
    */
   async getSettings() {
     const settings = await getSettings();
-    return { ok: true, settings, engines: await engineAvailability(settings) };
+    try {
+      const engines = await engineAvailability(settings);
+      return { ok: true, settings, engines };
+    } catch (error) {
+      // 探测失败不影响设置读取，返回默认可用状态
+      return {
+        ok: true,
+        settings,
+        engines: {
+          google: { available: true, reason: "探测失败（可直接尝试翻译）" },
+          bing: {
+            available: Boolean(settings.apiKey),
+            reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
+          },
+          mymemory: { available: true, reason: "探测失败（可直接尝试翻译）" },
+          lingva: { available: true, reason: "探测失败（可直接尝试翻译）" },
+        },
+      };
+    }
   },
 
   /**
@@ -106,7 +124,23 @@ const handlers = {
   async getEngineStatus() {
     try {
       const settings = await getSettings();
-      return { ok: true, engines: await engineAvailability(settings) };
+      try {
+        const engines = await engineAvailability(settings);
+        return { ok: true, engines };
+      } catch (error) {
+        return {
+          ok: true,
+          engines: {
+            google: { available: true, reason: "探测失败（可直接尝试翻译）" },
+            bing: {
+              available: Boolean(settings.apiKey),
+              reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
+            },
+            mymemory: { available: true, reason: "探测失败（可直接尝试翻译）" },
+            lingva: { available: true, reason: "探测失败（可直接尝试翻译）" },
+          },
+        };
+      }
     } catch (error) {
       return { ok: false, engines: {}, error: error && error.message ? error.message : String(error) };
     }
