@@ -203,7 +203,20 @@
       const engines = (response && response.engines) || {};
       const current = els.engine.value;
       const info = engines[current];
-      if (info && info.available) {
+      if (info && info.reason) {
+        if (current === "google") {
+          els.engineInfo.textContent = "Google 免费接口 · " + info.reason;
+        } else if (current === "mymemory") {
+          els.engineInfo.textContent = "MyMemory 免费接口 · " + info.reason;
+        } else if (current === "lingva") {
+          els.engineInfo.textContent = "Lingva 免费接口 · " + info.reason;
+        } else if (current === "bing") {
+          els.engineInfo.textContent = info.reason;
+        } else {
+          els.engineInfo.textContent = info.reason;
+        }
+        els.engineInfo.className = "engine-info warn";
+      } else {
         if (current === "google") {
           els.engineInfo.textContent = "Google 免费接口 · 可用";
         } else if (current === "mymemory") {
@@ -216,9 +229,6 @@
           els.engineInfo.textContent = "引擎可用";
         }
         els.engineInfo.className = "engine-info ok";
-      } else {
-        els.engineInfo.textContent = (info && info.reason) || "当前引擎不可用";
-        els.engineInfo.className = "engine-info warn";
       }
     } catch (error) {
       els.engineInfo.textContent = "引擎状态检测失败：" + (error.message || error);

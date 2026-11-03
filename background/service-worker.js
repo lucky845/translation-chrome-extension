@@ -133,34 +133,32 @@ async function engineAvailability(settings) {
     lingva: { available: true, reason: null },
   };
 
-  // 轻量探测 Google：单条极短请求，失败也不抛出
+  // 轻量探测：国内网络普遍无法直连免费接口，仅用于显示警告，不阻断使用
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "google");
-    status.google.available = probe.ok;
-    status.google.reason = probe.ok ? null : probe.error || "请求失败";
+    if (!probe.ok) {
+      status.google.reason = probe.error || "网络可能受限（直连 Google 在国内常被拦截）";
+    }
   } catch (error) {
-    status.google.available = false;
-    status.google.reason = error.message || String(error);
+    status.google.reason = "网络可能受限（直连 Google 在国内常被拦截）";
   }
 
-  // 探测 MyMemory
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "mymemory");
-    status.mymemory.available = probe.ok;
-    status.mymemory.reason = probe.ok ? null : probe.error || "请求失败";
+    if (!probe.ok) {
+      status.mymemory.reason = probe.error || "网络可能受限";
+    }
   } catch (error) {
-    status.mymemory.available = false;
-    status.mymemory.reason = error.message || String(error);
+    status.mymemory.reason = "网络可能受限";
   }
 
-  // 探测 Lingva
   try {
     const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "lingva");
-    status.lingva.available = probe.ok;
-    status.lingva.reason = probe.ok ? null : probe.error || "请求失败";
+    if (!probe.ok) {
+      status.lingva.reason = probe.error || "网络可能受限";
+    }
   } catch (error) {
-    status.lingva.available = false;
-    status.lingva.reason = error.message || String(error);
+    status.lingva.reason = "网络可能受限";
   }
 
   return status;
