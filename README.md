@@ -6,7 +6,7 @@
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
 ![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)
