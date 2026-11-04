@@ -50,7 +50,6 @@
       const els = {
         source: document.getElementById("source-language"),
         target: document.getElementById("target-language"),
-        engine: document.getElementById("engine"),
         auto: document.getElementById("auto-translate"),
         translateBtn: document.getElementById("translate-btn"),
         restoreBtn: document.getElementById("restore-btn"),
@@ -66,27 +65,30 @@
       await loadSettings(els);
       try {
         await refreshPageState(els);
-      } catch {}
-
-      if (els.engine) {
-        els.engine.addEventListener("change", async () => {
-          try {
-            await saveSettings({ engine: els.engine.value });
-            await checkEngine(els);
-          } catch {}
-        });
+      } catch {
+        // 静默：失败不阻断主流程
       }
 
-      if (els.target) els.target.addEventListener("change", () => saveSettings({ targetLanguage: els.target.value }).catch(() => {}));
-      if (els.source) els.source.addEventListener("change", () => saveSettings({ sourceLanguage: els.source.value }).catch(() => {}));
-      if (els.auto) els.auto.addEventListener("change", () => saveSettings({ autoTranslate: els.auto.checked }).catch(() => {}));
+      if (els.target)
+        els.target.addEventListener("change", () => saveSettings({ targetLanguage: els.target.value }).catch(() => {}));
+      if (els.source)
+        els.source.addEventListener("change", () => saveSettings({ sourceLanguage: els.source.value }).catch(() => {}));
+      if (els.auto)
+        els.auto.addEventListener("change", () => saveSettings({ autoTranslate: els.auto.checked }).catch(() => {}));
 
       if (els.translateBtn) els.translateBtn.addEventListener("click", () => runAction(els, "translatePage"));
       if (els.restoreBtn) els.restoreBtn.addEventListener("click", () => runAction(els, "restorePage"));
       if (els.optionsBtn) els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
       try {
-        await checkEngine(els);
+        const tab = await activeTab();
+        const status = tab && tab.id ? await sendToTab(tab.id, { action: "getStatus" }) : null;
+        if (status && status.offline) {
+          els.engineInfo.textContent = "已启用浏览器端侧翻译 · 本地推理，不联网不限流";
+          els.engineInfo.className = "engine-info ok";
+        } else {
+          await checkEngine(els);
+        }
       } catch (e) {
         if (els.engineInfo) {
           els.engineInfo.textContent = "引擎可用（探测跳过）";
@@ -131,13 +133,11 @@
       const stored = await chrome.storage.sync.get({
         targetLanguage: "zh-CN",
         sourceLanguage: "auto",
-        engine: "google",
         autoTranslate: false,
       });
 
       if (els.target) els.target.value = stored.targetLanguage;
       if (els.source) els.source.value = stored.sourceLanguage;
-      if (els.engine) els.engine.value = stored.engine;
       if (els.auto) els.auto.checked = Boolean(stored.autoTranslate);
     } catch (e) {
       // storage 失败也不影响界面显示
@@ -152,7 +152,9 @@
   async function saveSettings(patch) {
     try {
       await chrome.storage.sync.set(patch);
-    } catch {}
+    } catch {
+      // 静默：失败不阻断主流程
+    }
   }
 
   /**
@@ -220,47 +222,40 @@
   }
 
   /**
-   * 显示引擎状态（不阻断弹窗初始化）。
+   * 展示当前翻译方式：端侧优先，其次显示已配置的在线引擎。
+   * 引擎切换已移到设置页，这里只做只读提示。
    * @param {Object} els 元素表
    * @return {Promise<void>}
    */
   async function checkEngine(els) {
+    if (!els || !els.engineInfo) return;
     try {
-      if (!els || !els.engineInfo) return;
-      const current = els.engine && els.engine.value;
-      if (current === "mymemory") {
-        els.engineInfo.textContent = "MyMemory 免费接口 · 可直接尝试翻译";
-      } else if (current === "lingva") {
-        els.engineInfo.textContent = "Lingva 免费接口 · 可直接尝试翻译";
-      } else if (current === "bing") {
-        els.engineInfo.textContent = "Azure 翻译 · 需密钥";
-      } else if (current === "google") {
-        els.engineInfo.textContent = "Google 免费接口 · 可直接尝试翻译";
-      } else {
-        els.engineInfo.textContent = "可直接尝试翻译";
-      }
-      els.engineInfo.className = "engine-info warn";
-      // 异步探测，不阻断 UI
-      try {
-        const response = await Promise.race([
-          chrome.runtime.sendMessage({ action: "getEngineStatus" }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 800)),
-        ]);
-        const engines = (response && response.engines) || {};
-        const info = engines[current];
-        if (info && info.reason) {
-          if (current === "google") els.engineInfo.textContent = "Google 免费接口 · " + info.reason;
-          else if (current === "mymemory") els.engineInfo.textContent = "MyMemory 免费接口 · " + info.reason;
-          else if (current === "lingva") els.engineInfo.textContent = "Lingva 免费接口 · " + info.reason;
-          else if (current === "bing") els.engineInfo.textContent = info.reason;
-          else els.engineInfo.textContent = info.reason;
-          els.engineInfo.className = "engine-info warn";
+      // 先问页面：浏览器支持端侧翻译吗
+      const tab = await activeTab();
+      if (tab && tab.id) {
+        const status = await sendToTab(tab.id, { action: "getStatus" });
+        if (status && status.offline) {
+          els.engineInfo.textContent = "本页使用浏览器端侧翻译 · 本地推理，不联网不限流";
+          els.engineInfo.className = "engine-info ok";
+          return;
         }
-      } catch {
-        // 静默忽略探测失败
       }
+
+      // 端侧不可用：显示设置里选中的在线引擎
+      const stored = await chrome.storage.sync.get({ engine: "google" });
+      const labels = {
+        google: "Google",
+        mymemory: "MyMemory",
+        lingva: "Lingva",
+        bing: "Azure Translator",
+        custom: "自定义接口",
+      };
+      const label = labels[stored.engine] || "在线引擎";
+      els.engineInfo.textContent = `本页使用在线引擎：${label}（可在设置中更改）`;
+      els.engineInfo.className = "engine-info warn";
     } catch {
-      // 完全静默
+      els.engineInfo.textContent = "翻译方式检测失败，可直接尝试翻译";
+      els.engineInfo.className = "engine-info warn";
     }
   }
 

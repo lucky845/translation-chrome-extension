@@ -118,5 +118,89 @@
   "howToUseStep4": {
     "message": "右键菜单可翻译选中的文本",
     "description": "步骤 4"
+  },
+  "customPresetLabel": {
+    "message": "接口预设"
+  },
+  "customPresetHint": {
+    "message": "选一个预设会自动填好下面的地址与模板；换成你自己的地址即可使用。国内网络下自建 DeepLX / LibreTranslate / OpenAI 兼容中转通常比公共免费接口稳定。"
+  },
+  "customUrlLabel": {
+    "message": "接口地址"
+  },
+  "customUrlHint": {
+    "message": "保存或测试时会请求访问该域名的权限；地址为空时该引擎不可用，降级链会自动跳过。"
+  },
+  "customMethodLabel": {
+    "message": "请求方式"
+  },
+  "customResponsePathLabel": {
+    "message": "响应路径"
+  },
+  "customTokenLabel": {
+    "message": "令牌（可选）"
+  },
+  "customModelLabel": {
+    "message": "模型（可选）"
+  },
+  "customHeadersLabel": {
+    "message": "请求头（JSON，可选）"
+  },
+  "customBodyLabel": {
+    "message": "请求体模板（可选）"
+  },
+  "customTemplateHint": {
+    "message": "占位符：{{text}} 原文、{{textJson}} 带引号的原文、{{from}} / {{to}} 语言码、{{toName}} 语言名、{{token}} 令牌、{{model}} 模型名"
+  },
+  "customTestButton": {
+    "message": "测试连接"
+  },
+  "offlineTranslationLabel": {
+    "message": "端侧翻译"
+  },
+  "offlineTranslationDesc": {
+    "message": "由浏览器内置模型在本机完成翻译，文字不离开设备。首次使用需下载该语言对的模型。"
+  },
+  "rungPrimary": {
+    "message": "默认使用"
+  },
+  "rungFallback": {
+    "message": "端侧不可用时启用"
+  },
+  "engineFieldLabel": {
+    "message": "引擎"
+  },
+  "preferencesTitle": {
+    "message": "翻译偏好"
+  },
+  "blacklistLabel": {
+    "message": "不翻译这些站点"
+  },
+  "blacklistPlaceholder": {
+    "message": "github.com\n*.bank.com\n/settings"
+  },
+  "blacklistHint": {
+    "message": "每行一个域名，支持 *.example.com 与 /path 前缀。命中的站点不会翻译，适合银行、后台、代码托管等页面。"
+  },
+  "useOfflineLabel": {
+    "message": "优先使用端侧翻译（推荐）"
+  },
+  "useOfflineDesc": {
+    "message": "Chrome 内置 AI 本地翻译，不联网不限流；Edge 无此能力时自动跳过。关闭则始终使用在线引擎。"
+  },
+  "translatedStyleLabel": {
+    "message": "译文样式"
+  },
+  "styleNone": {
+    "message": "无标记"
+  },
+  "styleUnderline": {
+    "message": "下划线标记译文"
+  },
+  "styleHighlight": {
+    "message": "高亮底色标记译文"
+  },
+  "translatedStyleHint": {
+    "message": "用颜色区分译文与原文，方便对照阅读。数据仍写入 data 属性，不改动页面 DOM。"
   }
 }

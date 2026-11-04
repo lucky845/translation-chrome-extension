@@ -110,6 +110,76 @@ test("容器直属文本与块级子元素分别成单元", () => {
   assert.ok(!shallow.text.includes("Nested paragraph"), "浅层单元不该吞掉块级后代文本");
 });
 
+console.log("\n[2.4] 包装层穿透（避免同一段文字被翻两遍）");
+
+test("无直属文本且只有单个子元素的包装层被穿透", () => {
+  const { api, win } = load(
+    `<html lang="en"><body>
+      <div class="a"><div class="b"><div class="c"><p>Real paragraph text.</p></div></div></div>
+    </body></html>`
+  );
+  const units = api.collectUnits(win.document.body);
+  assert.equal(units.length, 1, `包装层不应各自成单元，实际 ${units.length} 个`);
+  assert.equal(units[0].text.trim(), "Real paragraph text.");
+  assert.equal(units[0].element.tagName.toLowerCase(), "p", "单元应落在真正的文本宿主上");
+});
+
+test("包装层合并后同一段文字只送翻一次", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div><div><section><p>Translate me once.</p></section></div></div></body></html>`
+  );
+  const units = api.collectUnits(win.document.body);
+  const texts = units.map(u => u.text.trim());
+  assert.deepEqual(texts, ["Translate me once."], `同一段文字不应重复送翻，实际: ${JSON.stringify(texts)}`);
+});
+
+test("有直属文本的容器不被穿透（否则会丢文本）", () => {
+  const { api, win } = load(`<html lang="en"><body><div>Intro text.<div><p>Nested para.</p></div></div></body></html>`);
+  const units = api.collectUnits(win.document.body);
+  const all = units.map(u => u.text).join(" | ");
+  assert.ok(all.includes("Intro text"), "容器直属文本必须保留");
+  assert.ok(all.includes("Nested para"), "子段落必须保留");
+});
+
+test("多个子元素时不穿透（不是纯包装壳）", () => {
+  const { api, win } = load(`<html lang="en"><body><div><p>First para.</p><p>Second para.</p></div></body></html>`);
+  const units = api.collectUnits(win.document.body);
+  assert.equal(units.length, 2, "两个子段落应各自成单元");
+});
+
+console.log("\n[2.5] Web Component 包裹的正文必须下钻");
+
+test("带短横线的自定义标签若有子元素，按块级继续下钻（GitHub react-partial）", () => {
+  const { api, win } = load(
+    `<html lang="en"><body>
+      <react-partial><div><p>Content inside a web component must be found.</p></div></react-partial>
+    </body></html>`
+  );
+  const units = api.collectUnits(win.document.body);
+  const texts = units.map(u => u.text).join(" | ");
+  assert.ok(texts.includes("Content inside a web component"), `自定义元素内的正文被漏掉了，实际采集: ${texts}`);
+});
+
+test("无子元素的自定义标签仍按内联处理（自闭合占位）", () => {
+  const { api, win } = load(`<html lang="en"><body><p>Before <x-icon></x-icon> after.</p></body></html>`);
+  const units = api.collectUnits(win.document.body);
+  assert.equal(units.length, 1);
+  assert.match(units[0].text, /<0\/>/, "空自定义标签应变成自闭合占位符");
+});
+
+test("turbo-frame / 嵌套自定义元素都能被穿透", () => {
+  const { api, win } = load(
+    `<html lang="en"><body>
+      <turbo-frame id="f"><react-partial><div>Nested web component text.</div></react-partial></turbo-frame>
+    </body></html>`
+  );
+  const units = api.collectUnits(win.document.body);
+  assert.ok(
+    units.some(u => u.text.includes("Nested web component text")),
+    "嵌套自定义元素内的文本应被采集"
+  );
+});
+
 console.log("\n[3] 译文应用与结构保留");
 test("内联标签在译文语序中被保留", () => {
   const { api, win } = load(
@@ -149,6 +219,116 @@ test("译文占位符被破坏时拒绝应用（保留原文）", () => {
   assert.equal(win.document.getElementById("p").innerHTML, before, "DOM 不应被改动");
 });
 
+console.log("\n[3.5] 占位符被破坏时的降级路径");
+
+test("占位符丢失：降级为文本节点级翻译，标签与属性全部保留", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p id="p">Read the <a href="/d" class="lnk">docs</a> before <b>start</b>.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body)[0];
+
+  // 引擎吞掉占位符
+  const broken = "阅读文档在开始之前。";
+  assert.equal(unit.apply(broken), false, "占位符缺失时严格还原必须拒绝");
+
+  // Read the / docs / before / start —— 4 个有意义的文本节点
+  const nodes = unit.meaningfulTextNodes();
+  assert.equal(nodes.length, 4, `应有 4 个文本节点，实际 ${nodes.length}`);
+  assert.equal(unit.applyWholeText("阅读文档在开始"), true, "整段降级应成功");
+
+  const p = win.document.getElementById("p");
+  assert.equal(p.textContent.replace(/\s+/g, " ").trim(), "阅读文档在开始.", "文字应被替换（末尾句号来自原文本节点）");
+
+  // 关键：结构必须完好
+  const a = p.querySelector("a");
+  assert.ok(a, "<a> 必须保留（之前用 textContent 会把它抹掉）");
+  assert.equal(a.getAttribute("href"), "/d", "href 必须保留");
+  assert.equal(a.getAttribute("class"), "lnk", "class 必须保留，否则样式崩");
+  assert.ok(p.querySelector("b"), "<b> 必须保留");
+});
+
+test("整段译文只写一次：多文本节点段落不重复", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p id="p">Read the <a href="/d">docs</a> before <b>start</b>.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body)[0];
+  const nodes = unit.meaningfulTextNodes();
+  assert.ok(nodes.length >= 3, `本用例需要多个文本节点，实际 ${nodes.length}`);
+
+  const translated = "阅读文档后再开始。";
+  assert.equal(unit.applyWholeText(translated), true);
+
+  const p = win.document.getElementById("p");
+  const text = p.textContent.replace(/\s+/g, "");
+  const occurrences = text.split("阅读").length - 1;
+  assert.equal(occurrences, 1, `整段译文只能出现一次，实际出现 ${occurrences} 次（重复写入了每个文本节点）`);
+  assert.ok(p.querySelector("a"), "链接必须保留");
+  assert.equal(p.querySelector("a").getAttribute("href"), "/d");
+  assert.ok(p.querySelector("b"), "加粗必须保留");
+});
+
+test("计数器数字不重复：纯数字节点保留、译文不含该数字", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="d"><span>Security and quality</span><span class="counter">9</span></div></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body)[0];
+
+  // 送翻的文本不含独立计数器数字（数字由节点自己保留）
+  assert.equal(unit.plainText, "Security and quality", `送翻文本不应含 9，实际: ${unit.plainText}`);
+
+  // 引擎只翻送进去的内容，自然不带 9
+  assert.equal(unit.applyWholeText("安全与质量"), true);
+
+  const text = win.document.getElementById("d").textContent.replace(/\s+/g, "").trim();
+  assert.equal(text, "安全与质量9", `9 应只出现一次，实际: ${text}`);
+  assert.equal((text.match(/9/g) || []).length, 1, "9 不能重复（截图里的 9(9) 就是这里出的问题）");
+  assert.ok(win.document.querySelector("#d .counter"), "计数器节点必须保留");
+});
+
+test("段落内数字保留：22 Branches 的 22 不能丢", () => {
+  const { api, win } = load(`<html lang="en"><body><div id="d">22 Branches <span>3</span> Tags</div></body></html>`);
+  const unit = api.collectUnits(win.document.body)[0];
+
+  // 段落文本里的 22 属于文字内容，应参与翻译
+  assert.equal(unit.plainText, "22 Branches Tags", `实际: ${unit.plainText}`);
+
+  assert.equal(unit.applyWholeText("22 个分支  个标签"), true);
+  const text = win.document.getElementById("d").textContent.replace(/\s+/g, "").trim();
+  assert.equal((text.match(/22/g) || []).length, 1, `22 应且只应出现一次，实际: ${text}`);
+  assert.equal((text.match(/3/g) || []).length, 1, `3 应且只应出现一次，实际: ${text}`);
+});
+
+test("文本节点级降级后仍可无损恢复", () => {
+  const { api, win } = load(`<html lang="en"><body><p id="p">Read the <a href="/d">docs</a> now.</p></body></html>`);
+  const original = win.document.body.innerHTML;
+  const unit = api.collectUnits(win.document.body)[0];
+
+  unit.applyWholeText("阅读文档现在");
+  assert.ok(win.document.querySelector("a"), "降级后仍有链接");
+  assert.equal(unit.restore(), true);
+  assert.equal(win.document.body.innerHTML, original, "结构必须逐字节还原");
+});
+
+test("空白压缩：缩进换行不进入待翻译串", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="d">\n    Hello   world  \n   <span>again</span>\n</div></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body)[0];
+  assert.ok(!/\n/.test(unit.text), `不应含换行: ${JSON.stringify(unit.text)}`);
+  assert.ok(!/ {2,}/.test(unit.text), `不应含连续空格: ${JSON.stringify(unit.text)}`);
+  assert.match(unit.text, /Hello world/);
+});
+
+test("plainText 剥离全部占位符", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p>Go <a href="#">here</a> and <img src="x.png"> then <b>run</b>.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body)[0];
+  assert.ok(unit.plainText.includes("Go here and"), `实际: ${unit.plainText}`);
+  assert.ok(!/\d+/.test(unit.plainText) || !/<\d/.test(unit.plainText), "plainText 不应残留占位符标记");
+  assert.ok(!/<\d+\/>|<\/?\d+>/.test(unit.plainText), `实际: ${unit.plainText}`);
+});
+
 console.log("\n[4] 无损恢复");
 test("深层单元恢复为原始 HTML", () => {
   const { api, win } = load(
@@ -185,6 +365,60 @@ test("重复 apply 不叠加翻译", () => {
   const afterFirst = win.document.getElementById("p").textContent;
   units[0].apply("你好世界。");
   assert.equal(win.document.getElementById("p").textContent, afterFirst, "重复 apply 不应产生重复文本");
+});
+
+console.log("\n[4.5] brace {{n}} 双占位符模式（自定义引擎用）");
+
+test("brace 采集：inline 元素序列化为 {{2k}}/{{2k+1}}，内层文字参与翻译", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p id="p">Read the <a href="/d">docs</a> before <b>start</b>.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body, "brace")[0];
+  assert.ok(unit.braceMap && unit.braceMap.size === 2, "应有 2 个 brace 占位符");
+  assert.match(unit.text, /Read the \{\{0\}\}docs\{\{1\}\} before \{\{2\}\}start\{\{3\}\}\./, `实际: ${unit.text}`);
+  assert.ok(!/<\d+>/.test(unit.text), "brace 模式不应产出 <n> 标签");
+});
+
+test("brace 还原：语序重排后原元素按新位置插回，结构完好", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p id="p">Read the <a href="/d" class="lnk">docs</a> before <b>start</b>.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body, "brace")[0];
+
+  // 模拟引擎：{{n}} 原样保留、内层文字已翻（Google 实测行为）
+  const simple = "阅读{{0}}文档{{1}}在{{2}}开始{{3}}之前。";
+  assert.equal(unit.applyBrace(simple), true, "applyBrace 应成功");
+
+  const p = win.document.getElementById("p");
+  assert.equal(p.textContent, "阅读文档在开始之前。", `实际: ${p.textContent}`);
+  const a = p.querySelector("a");
+  assert.ok(a, "链接元素被移动而非克隆，必须存在");
+  assert.equal(a.getAttribute("href"), "/d", "href 保留");
+  assert.equal(a.getAttribute("class"), "lnk", "class 保留");
+});
+
+test("brace 校验：token 丢失或错配时拒绝应用（回落整段降级）", () => {
+  const { api, win } = load(`<html lang="en"><body><p id="p">Read the <a href="/d">docs</a> now.</p></body></html>`);
+  const unit = api.collectUnits(win.document.body, "brace")[0];
+
+  // open 没了 close：应拒绝
+  assert.equal(unit.applyBrace("阅读{{0}}文档。"), false, "缺 close token 必须拒绝");
+  // 未知编号：应拒绝
+  assert.equal(unit.applyBrace("阅读{{0}}文档{{1}}{{9}}。"), false, "未知 token 必须拒绝");
+  // 应用失败后 DOM 未被破坏
+  assert.ok(win.document.querySelector("#p a"), "拒绝时不应改动 DOM");
+});
+
+test("brace void：自闭合元素只发 open token", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p id="p">Score <img src="x.png" alt="star"> of ten.</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.body, "brace")[0];
+  assert.match(unit.text, /Score \{\{0\}\} of ten\./, `实际: ${unit.text}`);
+  assert.equal(unit.applyBrace("十分制得分{{0}}。"), true);
+  const img = win.document.querySelector("#p img");
+  assert.ok(img, "img 元素必须被插回");
+  assert.equal(img.getAttribute("src"), "x.png");
 });
 
 console.log("\n[5] 语言判断");

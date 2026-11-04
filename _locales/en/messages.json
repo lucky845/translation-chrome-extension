@@ -118,5 +118,89 @@
   "howToUseStep4": {
     "message": "Right-click any selection to translate just that text",
     "description": "Step 4"
+  },
+  "customPresetLabel": {
+    "message": "API preset"
+  },
+  "customPresetHint": {
+    "message": "Choosing a preset fills in the endpoint and template below. Replace the URL with your own service. A self-hosted DeepLX / LibreTranslate / OpenAI-compatible relay is usually more reliable than public free endpoints."
+  },
+  "customUrlLabel": {
+    "message": "Endpoint URL"
+  },
+  "customUrlHint": {
+    "message": "Saving or testing asks for permission to access this origin. When the URL is empty the engine is unavailable and the fallback chain skips it."
+  },
+  "customMethodLabel": {
+    "message": "HTTP method"
+  },
+  "customResponsePathLabel": {
+    "message": "Response path"
+  },
+  "customTokenLabel": {
+    "message": "Token (optional)"
+  },
+  "customModelLabel": {
+    "message": "Model (optional)"
+  },
+  "customHeadersLabel": {
+    "message": "Headers (JSON, optional)"
+  },
+  "customBodyLabel": {
+    "message": "Request body template (optional)"
+  },
+  "customTemplateHint": {
+    "message": "Placeholders: {{text}} raw text, {{textJson}} JSON-quoted text, {{from}}/{{to}} language codes, {{toName}} language name, {{token}}, {{model}}"
+  },
+  "customTestButton": {
+    "message": "Test connection"
+  },
+  "offlineTranslationLabel": {
+    "message": "On-device translation"
+  },
+  "offlineTranslationDesc": {
+    "message": "Translated locally by your browser's built-in model; text never leaves the device. The model for a language pair downloads on first use."
+  },
+  "rungPrimary": {
+    "message": "Default"
+  },
+  "rungFallback": {
+    "message": "Used when on-device is unavailable"
+  },
+  "engineFieldLabel": {
+    "message": "Engine"
+  },
+  "preferencesTitle": {
+    "message": "Preferences"
+  },
+  "blacklistLabel": {
+    "message": "Never translate these sites"
+  },
+  "blacklistPlaceholder": {
+    "message": "github.com\n*.bank.com\n/settings"
+  },
+  "blacklistHint": {
+    "message": "One host per line; supports *.example.com and /path prefixes. Matching sites are never translated — useful for banking, admin consoles, and code hosting."
+  },
+  "useOfflineLabel": {
+    "message": "Prefer on-device translation (recommended)"
+  },
+  "useOfflineDesc": {
+    "message": "Chrome's built-in AI translates locally — no network, no rate limits; skipped automatically on Edge. Turn off to always use online engines."
+  },
+  "translatedStyleLabel": {
+    "message": "Translation style"
+  },
+  "styleNone": {
+    "message": "No marking"
+  },
+  "styleUnderline": {
+    "message": "Underline translations"
+  },
+  "styleHighlight": {
+    "message": "Highlight background"
+  },
+  "translatedStyleHint": {
+    "message": "Visually distinguish translations from source text. Applied via data attributes without changing the page DOM."
   }
 }

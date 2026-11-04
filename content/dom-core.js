@@ -84,6 +84,9 @@
     "pre",
   ]);
 
+  /** @type {WeakMap<Element, boolean>} 计算样式判定缓存，避免重复 reflow */
+  const inlineCache = new WeakMap();
+
   // 纯空白 / 纯标点 / 纯数字的文本不值得发请求。
   const TRIVIAL_RE = /^[\s\p{P}\p{S}\p{N}]*$/u;
 
@@ -95,12 +98,51 @@
    * @param {Element} element 元素
    * @return {boolean} true 表示内联
    */
+  /**
+   * 判断元素是否内联。
+   *
+   * 判定顺序：
+   *   1. 显式 display 属性
+   *   2. 内联标签白名单
+   *   3. 自定义元素：内部有块级子元素即视为结构容器
+   *   4. 兜底用 getComputedStyle（结果缓存），避免纯 div+CSS 的站点全被当块级
+   *
+   * 第 4 步很重要：现代站点大量用 `<div style="display:inline">` 或 CSS 类
+   * 把 span 级的行内片段做成 div，只看标签名会把它们错当成独立段落。
+   */
   function isInline(element) {
     if (!element || element.nodeType !== ELEMENT_NODE) return false;
     const tag = element.tagName.toLowerCase();
+
+    // 1. 显式 display 声明优先
+    const declared = element.getAttribute && element.getAttribute("display");
+    if (declared) {
+      if (declared.includes("inline")) return true;
+      if (declared.includes("block")) return false;
+    }
+
+    // 2. 内联标签白名单
     if (INLINE_TAGS.has(tag)) return true;
-    // Web Components 自定义元素：布局语义不确定，按内联处理以避免拆碎句子
-    return tag.indexOf("-") !== -1;
+
+    // 3. 自定义元素：无子元素才是行内占位，否则按结构容器处理
+    if (tag.indexOf("-") !== -1) {
+      return element.childElementCount === 0;
+    }
+
+    // 4. 计算样式兜底（带缓存，递归判定会反复问同一个元素）
+    if (inlineCache.has(element)) return inlineCache.get(element);
+    let result = false;
+    try {
+      const view = element.ownerDocument && element.ownerDocument.defaultView;
+      if (view && typeof view.getComputedStyle === "function") {
+        const display = view.getComputedStyle(element).display || "";
+        result = display.indexOf("inline") === 0 && display !== "inline-block";
+      }
+    } catch {
+      result = false;
+    }
+    inlineCache.set(element, result);
+    return result;
   }
 
   /**
@@ -116,6 +158,8 @@
     if (element.getAttribute("contenteditable") === "true") return true;
     if (element.getAttribute("translate") === "no") return true;
     if (element.classList && element.classList.contains("notranslate")) return true;
+    // 本扩展写入的译文容器：绝不能被二次采集，否则会原文与译文来回翻。
+    if (element.hasAttribute("data-tp-translated")) return true;
     return false;
   }
 
@@ -256,6 +300,16 @@
       this.shallow = opts.shallow === true;
       this.text = "";
       this.placeholders = new Map();
+      /** @type {Map<number, Element>} brace {{n}} 模式的原子占位符映射（自定义引擎用） */
+      this.braceMap = new Map();
+      /** 去掉全部占位符后的纯文本 */
+      this.plainText = "";
+      /** @type {Array<Text>} 参与翻译的文本节点（文档顺序），降级时就地替换用 */
+      this.textNodeRefs = [];
+      /** @type {?{class: ?string, style: ?string}} 打标记前的原始属性，恢复时精确写回 */
+      this.savedAttrs = null;
+      /** @type {Array<{node: Text, value: string}>} 就地替换前的原值，用于无损还原 */
+      this.savedTextValues = [];
       this.translated = false;
 
       // 深层单元还原用
@@ -271,8 +325,14 @@
      * 采集可翻译内容。
      * @return {boolean} 是否有值得翻译的文本
      */
-    collect() {
+    /**
+     * 采集并序列化。
+     * @param {string} [mode] 占位符风格："tag"（默认，<0>…</0>，Google 用）或 "brace"（{{n}} 原子，自定义引擎用）
+     * @return {boolean} 是否采集到可翻译文本
+     */
+    collect(mode) {
       const self = this;
+      self.braceMode = mode === "brace";
       let buffer = "";
       /** @type {Element[]} */
       const placeholderElements = [];
@@ -285,6 +345,7 @@
         for (const child of node.childNodes) {
           if (child.nodeType === TEXT_NODE) {
             buffer += child.nodeValue;
+            self.textNodeRefs.push(child);
             continue;
           }
           if (child.nodeType !== ELEMENT_NODE) continue;
@@ -302,7 +363,20 @@
           const id = placeholderElements.length;
           placeholderElements.push(element);
 
-          if (element.childNodes.length === 0) {
+          if (self.braceMode) {
+            // 成对 brace：open={{2k}} close={{2k+1}}，void={{2k}}。
+            // DeepLX/LibreTranslate/OpenAI 等纯文本引擎会把 <0> 当 HTML 剥掉，
+            // 但 {{n}} 是普通文本 token，实测 Google/DeepL 类引擎原样保留并随语序重排，
+            // 内层文字继续 walk 进入翻译（链接文字也能翻到）。
+            self.braceMap.set(id, { element, void: element.childNodes.length === 0 });
+            if (element.childNodes.length === 0) {
+              buffer += "{{" + 2 * id + "}}";
+            } else {
+              buffer += "{{" + 2 * id + "}}";
+              walk(element);
+              buffer += "{{" + (2 * id + 1) + "}}";
+            }
+          } else if (element.childNodes.length === 0) {
             self.placeholders.set(id, { kind: "void", element });
             buffer += "<" + id + "/>";
           } else {
@@ -315,7 +389,20 @@
       }
 
       walk(this.element);
-      this.text = buffer;
+      // 压缩连续空白：源码里的缩进与换行会被送进引擎，
+      // 既浪费字符也让译文掺杂大量空白（AAA 这类页面占位符灾难的主因之一）。
+      this.text = buffer.replace(/[ \t]*\n[ \t\n]*/g, " ").replace(/ {2,}/g, " ");
+      // plainText 只由「有语义的」文本节点组成：
+      // 纯数字与纯符号（GitHub 的计数器 "9"、角标 "(9)"）不参与翻译，
+      // 否则整段译文里会带上这些数字，而节点本身又保留数字 → 显示成 "9(9)"。
+      const strip = this.braceMode ? /\{\{\/?\d+\}\}/g : /<\d+\/>|<\/\d+>|<\d+>/g;
+      this.plainText = this.textNodeRefs
+        .map(node => String(node.nodeValue || "").trim())
+        .filter(value => value.length > 0 && /\p{L}/u.test(value))
+        .join(" ")
+        .replace(strip, "")
+        .replace(/ {2,}/g, " ")
+        .trim();
       return this.hasTranslatableText();
     }
 
@@ -337,6 +424,8 @@
      */
     apply(translated) {
       if (typeof translated !== "string" || translated.trim().length === 0) return false;
+      // 幂等：同一单元不允许被应用两次，否则文字会叠加成重复
+      if (this.translated) return false;
 
       const pieces = parsePlaceholders(translated);
       if (pieces === null) return false; // 占位符不平衡，拒绝生成错乱 DOM
@@ -352,6 +441,7 @@
 
       if (this.originalHtml === null) this.originalHtml = this.element.innerHTML;
       this.element.replaceChildren(fragment);
+      this.markTranslated();
       this.translated = true;
       return true;
     }
@@ -392,11 +482,201 @@
     }
 
     /**
+     * brace 模式还原：译文按 {{n}} 拆成 token 流，栈式重建元素内容。
+     * 约定：inline 元素 k 序列化为 open={{2k}} / close={{2k+1}}，void 只发 {{2k}}。
+     * 实测 Google 对 {{n}} 原样保留并按目标语序重排；DeepL 类纯文本引擎同样通过。
+     * 任一 token 丢失/配对失败即返回 false，由调用方回落 applyWholeText。
+     * @param {string} translated 含 {{n}} 的译文
+     * @return {boolean} 是否成功
+     */
+    applyBrace(translated) {
+      if (this.braceMap.size === 0) return false;
+      const raw = String(translated || "");
+      if (!raw.trim()) return false;
+
+      const TOKEN = /\{\{(\d+)\}\}/g;
+      const tokens = [];
+      let match;
+      let cursor = 0;
+      while ((match = TOKEN.exec(raw)) !== null) {
+        if (match.index > cursor) {
+          tokens.push({ kind: "text", value: raw.slice(cursor, match.index) });
+        }
+        tokens.push({ kind: "token", id: Number(match[1]) });
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < raw.length) tokens.push({ kind: "text", value: raw.slice(cursor) });
+
+      // 第一遍：纯校验，不动 DOM。全部通过后才进入第二遍重建，
+      // 避免「校验失败但元素已被摘下」的半破坏状态。
+      const stack = [];
+      for (const token of tokens) {
+        if (token.kind === "text") continue;
+        const elementId = Math.floor(token.id / 2);
+        const isClose = token.id % 2 === 1;
+        const entry = this.braceMap.get(elementId);
+        if (!entry) return false;
+        if (entry.void) {
+          if (isClose) return false;
+          continue;
+        }
+        if (!isClose) {
+          stack.push(elementId);
+        } else {
+          if (stack.pop() !== elementId) return false; // 交叉嵌套
+        }
+      }
+      if (stack.length > 0) return false; // 有 open 没有 close
+
+      // 第二遍：重建。open 时清空元素旧内容（原文由译文承接），再作为容器承接后续节点。
+      if (this.originalHtml === null) this.originalHtml = this.element.innerHTML;
+      const fragment = document.createDocumentFragment();
+      const open = [];
+      const parent = () => (open.length > 0 ? open[open.length - 1] : fragment);
+
+      for (const token of tokens) {
+        if (token.kind === "text") {
+          const value = String(token.value || "");
+          if (value) parent().appendChild(document.createTextNode(value));
+          continue;
+        }
+
+        const elementId = Math.floor(token.id / 2);
+        const isClose = token.id % 2 === 1;
+        const entry = this.braceMap.get(elementId);
+
+        if (entry.void) {
+          parent().appendChild(entry.element);
+          continue;
+        }
+        if (!isClose) {
+          entry.element.replaceChildren(); // 清掉原英文内文，译文文本节点随后填入
+          parent().appendChild(entry.element);
+          open.push(entry.element);
+        } else {
+          open.pop();
+        }
+      }
+
+      this.element.replaceChildren(fragment);
+      this.translated = true;
+      return true;
+    }
+
+    /**
+     * 整段译文只写一次：放进第一个有意义的文本节点，其余清空。
+     *
+     * 适用场景：译文是「整段」而非逐节点对应（端侧翻译、纯文本降级）。
+     * 若把整段重复写进每个文本节点，一个含 3 个节点的段落就会显示 3 遍。
+     * 标签与属性完全不动，样式不受影响。
+     *
+     * @param {string} translated 整段译文
+     * @return {boolean} 是否成功
+     */
+    applyWholeText(translated) {
+      const text = String(translated || "").trim();
+      if (!text) return false;
+      // 幂等：端侧与在线两条路径可能先后命中同一单元，重复写入会造成文字重复
+      if (this.translated) return false;
+
+      // 把文本节点分成两类，避免数字重复：
+      //   1) 纯数字/纯符号节点（GitHub 的 "9"、"(3)"）——页面真实数据，**原样不动**；
+      //   2) 含文字的节点——承载译文，全部清空后只在第一个里写入整段译文。
+      // 送翻的 plainText 只由第 2 类拼成，所以译文里不含第 1 类的数字，天然不会重复。
+      const contentNodes = this.meaningfulTextNodes();
+      if (contentNodes.length === 0) return false;
+
+      // 数字归属唯一化：纯数字/纯符号节点**不参与采集**（见 collect/plainText），
+      // 因此送进引擎的文本本来就不含它们，译文也不会带回来 —— 不会重复。
+      // 所以这里既不剥数字（会丢掉段落内的 "22"），也不清空数字节点（那是页面真实数据）。
+      const target = contentNodes[0];
+      this.savedTextValues = contentNodes.map(node => ({ node, value: node.nodeValue }));
+      for (const node of contentNodes) {
+        node.nodeValue = node === target ? text : "";
+      }
+
+      this.markTranslated();
+      this.translated = true;
+      return true;
+    }
+
+    /**
+     * 参与翻译的文本节点：跳过纯空白与纯符号。
+     * @return {Array<Text>} 文本节点
+     */
+    meaningfulTextNodes() {
+      return this.textNodeRefs.filter(node => {
+        const value = String(node.nodeValue || "").trim();
+        return value.length > 0 && /\p{L}/u.test(value);
+      });
+    }
+
+    /**
+     * 给容器打上「已翻译」标记，并放开可能截断译文的高度限制。
+     *
+     * 中文字数通常少于英文，但换算成行高后反而更容易被 -webkit-line-clamp
+     * 裁掉尾部；翻译后解除该限制。
+     * @return {void}
+     */
+    markTranslated() {
+      if (!this.element || !this.element.setAttribute) return;
+
+      // 记录原始属性，恢复时要逐字节还原（class=""/style="" 这种残留会让还原断言失败）
+      this.savedAttrs = {
+        class: this.element.getAttribute("class"),
+        style: this.element.getAttribute("style"),
+      };
+
+      this.element.setAttribute("data-tp-translated", "");
+      this.element.classList.add("notranslate");
+      try {
+        const style = this.element.style;
+        if (!style) return;
+        style.setProperty("-webkit-line-clamp", "unset");
+        style.setProperty("max-height", "none");
+        style.setProperty("height", "auto");
+      } catch {
+        // 某些环境不支持这些属性，忽略即可
+      }
+    }
+
+    /**
      * 恢复原始状态。
      * @return {boolean} 是否执行了恢复
      */
     restore() {
       if (!this.translated) return false;
+
+      // 清掉标记，否则容器这辈子都不会再被翻译。
+      // 属性要按原文精确还原：原本没有 class/style 就必须 removeAttribute，
+      // 否则会留下 class=""、style="" 这种空壳，破坏「逐字节还原」。
+      if (this.element && this.element.removeAttribute) {
+        this.element.removeAttribute("data-tp-translated");
+        const saved = this.savedAttrs || {};
+        for (const name of ["class", "style"]) {
+          const original = saved[name];
+          if (original === null || original === undefined) {
+            this.element.removeAttribute(name);
+          } else {
+            this.element.setAttribute(name, original);
+          }
+        }
+        this.savedAttrs = null;
+      }
+
+      // 文本节点级替换：把原值写回去即可，标签从未被改动
+      if (this.savedTextValues.length > 0) {
+        for (const { node, value } of this.savedTextValues) {
+          try {
+            node.nodeValue = value;
+          } catch {
+            // 节点已随页面更新被移除，忽略
+          }
+        }
+        this.savedTextValues = [];
+        this.translated = false;
+        return true;
+      }
 
       if (this.shallow) {
         for (const node of this.insertedNodes) node.remove();
@@ -417,6 +697,20 @@
       this.translated = false;
       return true;
     }
+  }
+
+  /**
+   * 参与遍历的子元素：跳过脚本/样式等整棵忽略的节点。
+   * @param {Element} element 元素
+   * @return {Element[]} 子元素
+   */
+  function visibleChildren(element) {
+    const list = [];
+    for (const child of element.children) {
+      if (shouldSkip(child)) continue;
+      list.push(child);
+    }
+    return list;
   }
 
   /**
@@ -451,7 +745,13 @@
    * @param {Element} root 根节点
    * @return {Array<TranslationUnit>} 单元列表
    */
-  function collectUnits(root) {
+  /**
+   * 采集可翻译单元。
+   * @param {Element} root 根元素
+   * @param {string} [placeholderMode] "tag"（默认）或 "brace"
+   * @return {Array<TranslationUnit>} 单元
+   */
+  function collectUnits(root, placeholderMode) {
     const base = root || (typeof document !== "undefined" ? document.body : null);
     const units = [];
     if (!base || base.nodeType !== ELEMENT_NODE) return units;
@@ -461,21 +761,29 @@
      * @param {Element} element 元素
      */
     function walk(element) {
-      if (!hasBlockChild(element)) {
-        const unit = new TranslationUnit(element);
-        if (unit.collect()) units.push(unit);
+      // 单子元素穿透：没有直属文本、且只有一个子元素时，这层只是包装壳
+      // （GitHub 的 react-partial / turbo-frame 层层嵌套就是这种结构）。
+      // 不穿透的话壳和内层会被当成两个单元，同一段文字翻两遍。
+      // 实测（GitHub 仓库页）：311 个单元里有 223 个是这种纯包装层，占 56% 字符。
+      let node = element;
+      while (!hasOwnText(node) && visibleChildren(node).length === 1) {
+        node = visibleChildren(node)[0];
+      }
+
+      if (!hasBlockChild(node)) {
+        const unit = new TranslationUnit(node);
+        if (unit.collect(placeholderMode)) units.push(unit);
         return;
       }
 
       // 容器自身还有直属文本时单独建浅层单元，否则 `<div>Some text <p>para</p></div>`
       // 里的 "Some text" 会被漏翻。
-      if (hasOwnText(element)) {
-        const own = new TranslationUnit(element, { shallow: true });
-        if (own.collect()) units.push(own);
+      if (hasOwnText(node)) {
+        const own = new TranslationUnit(node, { shallow: true });
+        if (own.collect(placeholderMode)) units.push(own);
       }
 
-      for (const child of element.children) {
-        if (shouldSkip(child)) continue;
+      for (const child of visibleChildren(node)) {
         if (isInline(child)) continue;
         walk(child);
       }
@@ -507,6 +815,18 @@
     return /\p{Script=Han}/u.test(sample);
   }
 
+  /**
+   * 统计样本里汉字占非空白字符的比例，用于识别「没有 lang 标记的中文页面」。
+   * @param {string} sample 样本
+   * @return {number} 0~1
+   */
+  function hanRatio(sample) {
+    const text = String(sample || "").replace(/\s+/g, "");
+    if (!text) return 0;
+    const han = text.match(/\p{Script=Han}/gu);
+    return han ? han.length / text.length : 0;
+  }
+
   const api = {
     INLINE_TAGS,
     SKIP_TAGS,
@@ -520,6 +840,7 @@
     hasOwnText,
     isPageAlreadyTarget,
     containsHanText,
+    hanRatio,
   };
 
   root.__TP_DOM__ = api;

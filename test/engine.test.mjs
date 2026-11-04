@@ -19,6 +19,14 @@ import {
   splitSentences,
   createEngine,
 } from "../background/engine.js";
+import {
+  CustomEngine,
+  CUSTOM_PRESETS,
+  resolveCustomConfig,
+  renderTemplate,
+  getByPath,
+  extractTranslation,
+} from "../background/engines/custom.js";
 
 // Node 20 的 fetch 不读代理环境变量，显式挂代理
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY;
@@ -35,7 +43,10 @@ const results = [];
  */
 function isRateLimited(error) {
   const message = String(error && error.message);
-  if (message.includes("HTTP 429") || message.includes("Lingva 全部实例失败")) {
+  // 出口 IP 限流、实例被 CF 拦、本机网络不可达——都属于环境受限，不是产品缺陷。
+  // 这些用例在真实 Chrome E2E 里另有过网验证。
+  const environmentSignals = ["HTTP 429", "Lingva 全部实例失败", "网络不可达", "fetch failed", "自定义接口连接失败"];
+  if (environmentSignals.some(signal => message.includes(signal))) {
     environmentLimited = true;
     return true;
   }
@@ -279,6 +290,154 @@ await test("Lingva：全部实例失败抛 Retryable（留给降级链）", asyn
   );
 });
 
+await test("缓存：恢复后再次翻译全部命中缓存，必须返回 ok 且不再发请求", async () => {
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response(
+        JSON.stringify([
+          ["甲", "en"],
+          ["乙", "en"],
+        ]),
+        { status: 200 }
+      );
+    },
+    async () => {
+      const first = await translateTexts(["A", "B"], "auto", "zh-CN", "google");
+      assert.equal(first.ok, true);
+      assert.deepEqual(
+        first.results.map(r => r.text),
+        ["甲", "乙"]
+      );
+
+      const callsAfterFirst = calls;
+      const second = await translateTexts(["A", "B"], "auto", "zh-CN", "google");
+      assert.equal(second.ok, true, "纯缓存命中不能报请求失败（恢复后再翻就是这条路径）");
+      assert.deepEqual(
+        second.results.map(r => r.text),
+        ["甲", "乙"],
+        "缓存译文必须一致"
+      );
+      assert.equal(calls, callsAfterFirst, "命中缓存不应再次请求网络");
+    }
+  );
+  clearCache();
+});
+
+await test("缓存：翻译失败的结果不得写入缓存（否则永久卡在原文）", async () => {
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response("blocked", { status: 429 });
+    },
+    async () => {
+      const first = await translateTexts(["ZZZ"], "auto", "zh-CN", "google");
+      assert.equal(first.ok, false, "全失败必须如实报 false");
+      const before = calls;
+      await translateTexts(["ZZZ"], "auto", "zh-CN", "google");
+      assert.ok(calls > before, "失败后重试应重新请求，而不是命中「原文」假缓存");
+    }
+  );
+  clearCache();
+});
+
+await test("熔断：引擎失败后进入冷却，下一批不再重付超时", async () => {
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, resetEngineHealth, getEngineHealth } = await import("../background/translator.js");
+  resetEngineHealth();
+
+  const callOrder = [];
+  const handler = url => {
+    callOrder.push(new URL(url).host);
+    if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+    if (url.includes("api.mymemory.translated.net")) {
+      const q = new URL(url).searchParams.get("q");
+      return new Response(
+        JSON.stringify({
+          responseData: { translatedText: `MM[${q}]` },
+          detectedLanguage: "en",
+          responseStatus: 200,
+          quotaFinished: false,
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response("down", { status: 503 });
+  };
+
+  await withMockFetch(handler, async () => {
+    const first = await translateTexts(["first batch"], "auto", "zh-CN", "google");
+    assert.equal(first.ok, true);
+    const googleCallsFirstBatch = callOrder.filter(host => host === "translate.googleapis.com").length;
+    assert.ok(googleCallsFirstBatch > 0, "第一批应尝试过 Google");
+    assert.equal(getEngineHealth().google.cooling, true, "Google 失败后应进入冷却");
+
+    callOrder.length = 0;
+    const second = await translateTexts(["second batch"], "auto", "zh-CN", "google");
+    assert.equal(second.ok, true);
+    assert.equal(second.engine, "mymemory");
+    assert.equal(
+      callOrder.filter(host => host === "translate.googleapis.com").length,
+      0,
+      `冷却期内不应再打 Google，实际调用序: ${callOrder.join(",")}`
+    );
+  });
+
+  resetEngineHealth();
+});
+
+await test("熔断：resetEngineHealth 后引擎重新参与（用户改配置即生效）", async () => {
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, resetEngineHealth, getEngineHealth } = await import("../background/translator.js");
+  resetEngineHealth();
+
+  const callOrder = [];
+  await withMockFetch(
+    url => {
+      callOrder.push(new URL(url).host);
+      if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+      return new Response("down", { status: 503 });
+    },
+    async () => {
+      await translateTexts(["a"], "auto", "zh-CN", "google");
+      assert.equal(getEngineHealth().google.cooling, true);
+      resetEngineHealth();
+      assert.deepEqual(getEngineHealth(), {}, "重置后不应残留冷却");
+    }
+  );
+  resetEngineHealth();
+});
+
 await test("降级链：Google 挂时先走 MyMemory，Lingva 不被触碰（链序实证）", async () => {
   // translator.js 依赖 chrome.storage，Node 环境 stub 之
   globalThis.chrome = {
@@ -324,6 +483,190 @@ await test("降级链：Google 挂时先走 MyMemory，Lingva 不被触碰（链
         callOrder.slice(0, firstMemory).every(host => host === "translate.googleapis.com"),
         `MyMemory 之前只应尝试 Google（含 429 重试），实际: ${callOrder.join(",")}`
       );
+    }
+  );
+});
+
+await test("熔断：Google 失败后下一批次直接跳过它，不再重付超时", async () => {
+  const { translateTexts, resetEngineHealth, getEngineHealth } = await import("../background/translator.js");
+  resetEngineHealth();
+
+  const hosts = [];
+  await withMockFetch(
+    url => {
+      const host = new URL(url).host;
+      hosts.push(host);
+      if (host === "translate.googleapis.com") return new Response("blocked", { status: 429 });
+      if (host === "api.mymemory.translated.net") {
+        const q = new URL(url).searchParams.get("q");
+        return new Response(
+          JSON.stringify({
+            responseData: { translatedText: `MM[${q}]` },
+            responseStatus: 200,
+            quotaFinished: false,
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("down", { status: 503 });
+    },
+    async () => {
+      const first = await translateTexts(["first batch text"], "auto", "zh-CN", "google");
+      assert.equal(first.engine, "mymemory");
+      const googleCallsFirst = hosts.filter(host => host === "translate.googleapis.com").length;
+      assert.ok(googleCallsFirst >= 1, "首批应尝试 Google");
+
+      assert.ok(getEngineHealth().google, "Google 应进入冷却");
+
+      const before = hosts.length;
+      const second = await translateTexts(["second batch text"], "auto", "zh-CN", "google");
+      assert.equal(second.engine, "mymemory", "第二批应仍走 MyMemory");
+      assert.equal(second.degraded, true, "降级标记保留给用户看");
+      const secondHosts = hosts.slice(before);
+      assert.ok(
+        !secondHosts.includes("translate.googleapis.com"),
+        `第二批不应再碰 Google，实际: ${secondHosts.join(",")}`
+      );
+      assert.ok(secondHosts.includes("api.mymemory.translated.net"));
+    }
+  );
+
+  resetEngineHealth();
+});
+
+console.log("\n[2.6] 自定义接口 · mock 单元测试");
+
+await test("自定义接口：未配置地址时不回落预设（防止把文本发给第三方）", () => {
+  const config = resolveCustomConfig({ customPreset: "deeplx", customUrl: "" });
+  assert.equal(config.url, "", "地址为空就必须为空，不能回落 api.deeplx.org");
+  assert.equal(config.method, CUSTOM_PRESETS.deeplx.method, "其余字段仍回落预设");
+  assert.equal(config.responsePath, "data");
+});
+
+await test("自定义接口：用户填写的地址覆盖预设", () => {
+  const config = resolveCustomConfig({
+    customPreset: "deeplx",
+    customUrl: "  http://127.0.0.1:1188/translate  ",
+  });
+  assert.equal(config.url, "http://127.0.0.1:1188/translate");
+});
+
+await test("自定义接口：模板渲染（JSON 转义 / URL 编码 / 未知变量保留）", () => {
+  const vars = { text: 'he said "hi"\nline2', from: "zh-CN", to: "en-US" };
+  assert.equal(
+    renderTemplate('{"q": "{{text}}"}', vars, "json"),
+    '{"q": "he said \\"hi\\"\\nline2"}',
+    "JSON 模式下引号与换行必须转义（外层引号由模板自己写）"
+  );
+  assert.equal(renderTemplate("?q={{text}}&sl={{from}}", vars, "url"), "?q=he%20said%20%22hi%22%0Aline2&sl=zh-CN");
+  assert.equal(renderTemplate("{{unknown}}", vars, "json"), "{{unknown}}", "未知变量原样保留");
+});
+
+await test("自定义接口：getByPath 支持数组下标，取不到返回 undefined", () => {
+  const data = { choices: [{ message: { content: "你好" } }] };
+  assert.equal(getByPath(data, "choices.0.message.content"), "你好");
+  assert.equal(getByPath(data, "choices.1.message.content"), undefined);
+  assert.equal(getByPath(data, "choices.message"), undefined, "非数组不可按下标取");
+});
+
+await test("自定义接口：响应解析（纯文本 / 路径取值 / 缺路径报错）", () => {
+  assert.equal(extractTranslation("  纯文本译文 ", ""), "纯文本译文", "无路径时纯文本直接返回");
+  assert.equal(extractTranslation('{"data":"译文"}', "data"), "译文");
+  assert.throws(
+    () => extractTranslation('{"data":"译文"}', ""),
+    error => error instanceof FatalTranslationError,
+    "JSON 对象但缺响应路径应报错而不是把整个 JSON 当译文"
+  );
+  assert.throws(
+    () => extractTranslation('{"data":{}}', "data"),
+    error => error instanceof FatalTranslationError
+  );
+});
+
+await test("自定义接口：未配置地址时 isAvailable=false 且不发起任何请求", async () => {
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response("should not happen", { status: 500 });
+    },
+    async () => {
+      const engine = new CustomEngine({ customPreset: "deeplx", customUrl: "" });
+      assert.equal(await engine.isAvailable(), false);
+      await assert.rejects(
+        () => engine.translate(["hello"], "en", "zh-CN"),
+        error => error instanceof FatalTranslationError && /未配置/.test(error.message)
+      );
+      assert.equal(calls, 0, "未配置时一次请求都不该发出");
+    }
+  );
+});
+
+await test("自定义接口：401 抛 Fatal 且不重试（鉴权失败重试无意义）", async () => {
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response('{"error":"bad token"}', { status: 401 });
+    },
+    async () => {
+      const engine = new CustomEngine({
+        customPreset: "generic",
+        customUrl: "http://127.0.0.1:9999/translate",
+        customMethod: "POST",
+        customBody: '{"q": {{textJson}}}',
+        customResponsePath: "data",
+      });
+      await assert.rejects(
+        () => engine.translate(["hello"], "en", "zh-CN"),
+        error => error instanceof FatalTranslationError && /鉴权失败/.test(error.message)
+      );
+      assert.equal(calls, 1, "401 不应重试");
+    }
+  );
+});
+
+await test("自定义接口：429 退避重试后成功", async () => {
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      if (calls < 2) return new Response("rate limited", { status: 429 });
+      return new Response(JSON.stringify({ data: "恢复" }), { status: 200 });
+    },
+    async () => {
+      const engine = new CustomEngine({
+        customPreset: "deeplx",
+        customUrl: "http://127.0.0.1:9999/translate",
+      });
+      const [result] = await engine.translate(["hi"], "en", "zh-CN");
+      assert.equal(result.text, "恢复");
+      assert.equal(calls, 2, "429 应重试一次后成功");
+    }
+  );
+});
+
+await test("自定义接口：openai 预设注入 token/model 并按路径取译文", async () => {
+  let captured = null;
+  await withMockFetch(
+    (url, init) => {
+      captured = { url, init };
+      return new Response(JSON.stringify({ choices: [{ message: { content: "你好" } }] }), { status: 200 });
+    },
+    async () => {
+      const engine = new CustomEngine({
+        customPreset: "openai",
+        customUrl: "http://127.0.0.1:9999/v1/chat/completions",
+        customToken: "sk-test",
+        customModel: "gpt-4o-mini",
+      });
+      const [result] = await engine.translate(["hello"], "en", "zh-CN");
+      assert.equal(result.text, "你好");
+      assert.equal(captured.init.headers.Authorization, "Bearer sk-test", "token 应注入 Authorization");
+      const body = JSON.parse(captured.init.body);
+      assert.equal(body.model, "gpt-4o-mini");
+      assert.ok(body.messages[0].content.includes("hello"), "正文应嵌入原文");
+      assert.ok(body.messages[0].content.includes("Chinese"), "提示词应包含目标语言名");
     }
   );
 });
