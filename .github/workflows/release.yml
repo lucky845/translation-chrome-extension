@@ -31,25 +31,3 @@ jobs:
                       打包好的 `${{ steps.package.outputs.zip_name }}` 文件已准备就绪，可用于提交到 Chrome Web Store。
                   draft: false
                   prerelease: false
-
-            - name: Debug secrets injection
-              env:
-                  EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-                  EDGE_CLIENT_SECRET: ${{ secrets.EDGE_CLIENT_SECRET }}
-                  EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
-                  EDGE_EXTENSION_FILE: extension-${{ github.ref_name }}.zip
-              run: |
-                  echo "EDGE_CLIENT_ID is set: [${EDGE_CLIENT_ID:+yes}]"
-                  echo "EDGE_CLIENT_SECRET is set: [${EDGE_CLIENT_SECRET:+yes}]"
-                  echo "EDGE_PRODUCT_ID is set: [${EDGE_PRODUCT_ID:+yes}]"
-                  echo "EDGE_EXTENSION_FILE: $EDGE_EXTENSION_FILE"
-
-            - name: Upload to Edge Add-ons
-              env:
-                  EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
-                  EDGE_CLIENT_SECRET: ${{ secrets.EDGE_CLIENT_SECRET }}
-                  EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
-                  EDGE_EXTENSION_FILE: extension-${{ github.ref_name }}.zip
-              run: |
-                  bash script/edge-addon-publish.sh
-
