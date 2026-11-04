@@ -5,196 +5,547 @@
   <title data-i18n="optionsPageTitle">网页翻译 · 设置</title>
   <style>
     :root {
-      --bg: #f5f6f8;
-      --card: #ffffff;
-      --fg: #111827;
-      --muted: #6b7280;
-      --line: #e5e7eb;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --ok: #047857;
-      --warn: #b45309;
+      --page: #f4f4f9;
+      --surface: #ffffff;
+      --ink: #1a1a24;
+      --ink-mid: #4c4c5c;
+      --ink-soft: #7a7a8c;
+      --rule: #e4e4ec;
+      --rule-strong: #d2d2de;
+      --accent: #3a30c4;
+      --accent-hover: #2e259f;
+      --accent-tint: #eeedfb;
+      --local: #17694f;
+      --local-tint: #e8f3ee;
+      --warn: #a9560b;
+      --warn-tint: #fbf0e3;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a7a8c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      padding: 40px 16px;
-      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      color: var(--fg);
-      background: var(--bg);
-    }
-    .container {
-      max-width: 640px;
-      margin: 0 auto;
-      padding: 28px 32px;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-    }
-    h1 {
-      margin: 0 0 6px;
-      font-size: 20px;
-      font-weight: 600;
-    }
-    .subtitle {
-      margin: 0 0 24px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .form-group { margin-bottom: 20px; }
-    label {
-      display: block;
-      margin-bottom: 6px;
-      font-size: 13px;
-      font-weight: 500;
-    }
-    .desc {
-      margin: -2px 0 8px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    select, input[type="password"], input[type="text"] {
-      width: 100%;
-      padding: 9px 10px;
+      padding: 48px 20px 72px;
+      font-family: var(--font);
       font-size: 14px;
-      color: var(--fg);
-      background: #fff;
-      border: 1px solid var(--line);
+      line-height: 1.6;
+      color: var(--ink);
+      background: var(--page);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .sheet {
+      max-width: 620px;
+      margin: 0 auto;
+    }
+
+    /* ---------- 页头 ---------- */
+    header { margin-bottom: 30px; }
+    header h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    header p {
+      margin: 0;
+      max-width: 46ch;
+      font-size: 13px;
+      color: var(--ink-soft);
+    }
+
+    /* ---------- 优先级竖轨：本地在前，在线在后 ---------- */
+    .ladder {
+      position: relative;
+      padding-left: 26px;
+    }
+    .ladder::before {
+      content: "";
+      position: absolute;
+      top: 10px;
+      bottom: 10px;
+      left: 6px;
+      width: 1px;
+      background: #dcdce6;
+    }
+
+    .rung {
+      position: relative;
+      margin-bottom: 14px;
+      padding: 20px 22px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+    }
+    .rung:last-child { margin-bottom: 0; }
+
+    .rung::before {
+      content: "";
+      position: absolute;
+      top: 26px;
+      left: -26px;
+      width: 7px;
+      height: 7px;
+      margin-left: 3px;
+      border: 1.5px solid var(--rule-strong);
+      border-radius: 50%;
+      background: var(--surface);
+    }
+    .rung[data-active="local"]::before {
+      border-color: var(--local);
+      background: var(--local);
+      box-shadow: 0 0 0 3px var(--local-tint);
+    }
+    .rung[data-active="fallback"]::before { border-color: var(--accent); background: var(--accent); }
+
+    .rung-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 3px;
+    }
+    .rung-head h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+    .tag {
+      padding: 1px 7px;
+      font-size: 11px;
+      line-height: 1.6;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .tag.local { color: var(--local); background: var(--local-tint); }
+    .tag.fallback { color: var(--ink-soft); background: var(--page); }
+
+    .rung p.lede {
+      margin: 0 0 14px;
+      max-width: 52ch;
+      font-size: 13px;
+      color: var(--ink-soft);
+    }
+
+    /* ---------- 表单 ---------- */
+    .field { margin-top: 16px; }
+    .field:first-of-type { margin-top: 0; }
+
+    .field > label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--ink-mid);
+    }
+
+    select,
+    input[type="password"],
+    input[type="text"],
+    input[type="url"],
+    textarea {
+      width: 100%;
+      padding: 9px 12px;
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
       border-radius: 8px;
       outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
-    select:focus, input:focus { border-color: var(--accent); }
-    .checkbox {
+    select {
+      padding-right: 30px;
+      background-image: var(--chevron);
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      appearance: none;
+      cursor: pointer;
+    }
+    textarea {
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+      resize: vertical;
+    }
+    select:focus,
+    input:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-tint);
+    }
+
+    .note {
+      margin: 6px 0 0;
+      max-width: 56ch;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--ink-soft);
+    }
+    .note code {
+      padding: 1px 4px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-mid);
+      background: #f4f4f9;
+      border-radius: 3px;
+    }
+    .note a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-tint); }
+    .note a:hover { border-bottom-color: var(--accent); }
+
+    /* 特异性要点：.field > label（0,1,1）会压过单独的 .toggle（0,1,0），
+       必须提高选择器权重，否则复选框会被拆到文字上方。 */
+    .field > label.toggle,
+    label.toggle {
       display: flex;
       align-items: flex-start;
       gap: 9px;
       cursor: pointer;
     }
-    .checkbox input { margin-top: 3px; }
-    .checkbox .text strong { display: block; font-size: 13px; }
-    .checkbox .text span { font-size: 12px; color: var(--muted); }
-    #azure-settings { display: none; }
+    .toggle input {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      margin: 3px 0 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .toggle strong { display: block; font-size: 13.5px; font-weight: 500; }
+    .toggle span {
+      display: block;
+      font-size: 12px;
+      color: var(--ink-soft);
+    }
+
+    /* ---------- 状态行 ---------- */
+    .state {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      margin-top: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--ink-soft);
+    }
+    .state::before {
+      content: "";
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      margin-top: 5px;
+      border-radius: 50%;
+      background: var(--rule-strong);
+    }
+    .state.ok { color: var(--local); }
+    .state.ok::before { background: var(--local); }
+    .state.warn { color: var(--warn); }
+    .state.warn::before { background: var(--warn); }
+
+    /* ---------- 自定义接口：折叠区 ---------- */
+    #custom-settings { display: none; margin-top: 18px; }
+    #custom-settings.active { display: block; }
+    #azure-settings { display: none; margin-top: 16px; }
     #azure-settings.active { display: block; }
-    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
-    .hint a { color: var(--accent); text-decoration: none; }
-    .hint a:hover { text-decoration: underline; }
-    .actions { margin-top: 24px; }
+
+    .pair-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .pair-grid .field { margin-top: 0; }
+
+    .trial {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--rule);
+    }
+    .trial .result {
+      flex: 1 1 200px;
+      min-width: 0;
+      font-size: 12.5px;
+      color: var(--ink-soft);
+      overflow-wrap: anywhere;
+    }
+    .trial .result.ok { color: var(--local); }
+    .trial .result.warn { color: var(--warn); }
+
+    /* ---------- 按钮 ---------- */
+    .footer-bar {
+      margin-top: 26px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
     button {
-      padding: 10px 22px;
+      font-family: inherit;
       font-size: 14px;
-      font-weight: 500;
-      color: #fff;
-      background: var(--accent);
-      border: none;
+      font-weight: 600;
       border-radius: 8px;
       cursor: pointer;
-      transition: background .15s ease;
+      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
     }
-    button:hover { background: var(--accent-hover); }
-    .status {
-      display: none;
-      margin-top: 14px;
-      padding: 9px 12px;
+    button.primary {
+      padding: 11px 24px;
+      color: #fff;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    button.quiet {
+      padding: 8px 15px;
       font-size: 13px;
-      border-radius: 8px;
+      font-weight: 500;
+      color: var(--ink-mid);
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
     }
-    .status.ok { color: var(--ok); background: #f0fdf4; border: 1px solid #d1fae5; }
-    .status.warn { color: var(--warn); background: #fffbeb; border: 1px solid #fef3c7; }
-    .engine-status {
-      margin-top: 10px;
-      padding: 9px 12px;
-      font-size: 12.5px;
-      border-radius: 8px;
-      background: #f9fafb;
-      color: var(--muted);
-      border: 1px solid var(--line);
+    button.quiet:hover { color: var(--ink); border-color: var(--ink-soft); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .saved {
+      font-size: 13px;
+      color: var(--local);
+      opacity: 0;
+      transition: opacity 0.2s ease;
     }
-    .engine-status.ok { color: var(--ok); background: #f0fdf4; border-color: #d1fae5; }
-    .engine-status.warn { color: var(--warn); background: #fffbeb; border-color: #fef3c7; }
-    .howto {
-      margin-top: 28px;
-      padding: 16px 18px;
-      background: #f9fafb;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+    .saved.show { opacity: 1; }
+    .saved.warn { color: var(--warn); }
+
+    /* ---------- 页脚说明 ---------- */
+    .colophon {
+      margin-top: 34px;
+      padding-top: 16px;
+      border-top: 1px solid var(--rule);
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--ink-soft);
     }
-    .howto h2 {
+    .colophon h2 {
       margin: 0 0 8px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
-      color: var(--muted);
+      letter-spacing: 0.02em;
+      color: var(--ink-mid);
     }
-    .howto ol {
+    .colophon ul {
       margin: 0;
-      padding-left: 18px;
-      font-size: 13px;
-      color: var(--muted);
+      padding-left: 16px;
     }
-    .howto li { margin: 3px 0; }
-    kbd {
+    .colophon li { margin: 0 0 4px; }
+    .colophon kbd {
       padding: 1px 5px;
-      font-size: 11px;
-      background: #eef0f2;
-      border: 1px solid #d1d5db;
-      border-bottom-width: 2px;
-      border-radius: 4px;
       font-family: inherit;
+      font-size: 11px;
+      color: var(--ink-mid);
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      border-radius: 4px;
+    }
+
+    @media (max-width: 560px) {
+      body { padding: 28px 14px 48px; }
+      .pair-grid { grid-template-columns: 1fr; }
+      .ladder { padding-left: 20px; }
+      .rung { padding: 16px; }
+      .rung::before { left: -20px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1 data-i18n="extensionName">网页翻译</h1>
-    <p class="subtitle" data-i18n="optionsSubtitle">翻译整页网页，保留链接、图片与排版结构</p>
+  <div class="sheet">
+    <header>
+      <h1 data-i18n="extensionName">网页翻译</h1>
+      <p data-i18n="optionsSubtitle">整页翻译，保留链接、图片与排版结构</p>
+    </header>
 
-    <div class="form-group">
-      <label for="target-language" data-i18n="defaultLanguageLabel">默认目标语言</label>
-      <p class="desc" data-i18n="defaultLanguageDesc">点击「翻译页面」时使用的目标语言</p>
-      <select id="target-language"></select>
+    <div class="ladder">
+      <!-- 第一级：浏览器内置端侧翻译，默认最优先 -->
+      <section class="rung" id="rung-local" data-active="local">
+        <div class="rung-head">
+          <h2 data-i18n="offlineTranslationLabel">端侧翻译</h2>
+          <span class="tag local" data-i18n="rungPrimary">默认使用</span>
+        </div>
+        <p class="lede" data-i18n="offlineTranslationDesc">
+          由浏览器内置模型在本机完成翻译，文字不离开设备。首次使用需下载该语言对的模型。
+        </p>
+        <div class="state" id="offline-status">检测中…</div>
+      </section>
+
+      <!-- 第二级：端侧不可用时的在线引擎 -->
+      <section class="rung" id="rung-online">
+        <div class="rung-head">
+          <h2 data-i18n="translationServiceLabel">在线翻译引擎</h2>
+          <span class="tag fallback" data-i18n="rungFallback">端侧不可用时启用</span>
+        </div>
+        <p class="lede" data-i18n="engineDesc">
+          Chrome 138+ 与 Edge 148+ 会优先使用本地模型；下面的设置仅在上面的端侧翻译不可用时生效。
+        </p>
+
+        <div class="field">
+          <label for="engine" data-i18n="engineFieldLabel">引擎</label>
+          <select id="engine">
+            <option value="google">Google（免费）</option>
+            <option value="mymemory">MyMemory（免密钥，有日配额）</option>
+            <option value="custom">自定义接口（自建 / 中转）</option>
+            <option value="lingva">Lingva（Google 镜像，可用性因地区而异）</option>
+            <option value="bing">Azure Translator（需密钥）</option>
+          </select>
+          <div class="state" id="engine-status">检测引擎状态…</div>
+        </div>
+
+        <div id="azure-settings">
+          <div class="field">
+            <label for="api-key" data-i18n="apiKeyLabel">Azure Translator 密钥</label>
+            <input type="password" id="api-key" data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
+            <p class="note" data-i18n="apiKeyHint">
+              在 Azure Portal 创建 Translator 资源后获取密钥。旧版 Bing 免费端点已于 2026-11 失效，因此本引擎必须配置密钥。
+            </p>
+          </div>
+        </div>
+
+        <div id="custom-settings">
+          <div class="field">
+            <label for="custom-preset" data-i18n="customPresetLabel">接口预设</label>
+            <select id="custom-preset"></select>
+            <p class="note" data-i18n="customPresetHint">
+              选一个预设会自动填好下面的地址与模板；换成你自己的地址即可使用。
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="custom-url" data-i18n="customUrlLabel">接口地址</label>
+            <input type="url" id="custom-url" placeholder="https://your-endpoint/translate" autocomplete="off">
+            <p class="note" data-i18n="customUrlHint">
+              保存或测试时会请求访问该域名的权限；地址为空时该引擎不可用，降级链会自动跳过。
+            </p>
+          </div>
+
+          <div class="pair-grid">
+            <div class="field">
+              <label for="custom-method" data-i18n="customMethodLabel">请求方式</label>
+              <select id="custom-method">
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="custom-response-path" data-i18n="customResponsePathLabel">响应路径</label>
+              <input type="text" id="custom-response-path" placeholder="data" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="pair-grid">
+            <div class="field">
+              <label for="custom-token" data-i18n="customTokenLabel">令牌（可选）</label>
+              <input type="password" id="custom-token" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="custom-model" data-i18n="customModelLabel">模型（可选）</label>
+              <input type="text" id="custom-model" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="custom-headers" data-i18n="customHeadersLabel">请求头（JSON，可选）</label>
+            <textarea id="custom-headers" rows="2" spellcheck="false"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="custom-body" data-i18n="customBodyLabel">请求体模板（可选）</label>
+            <textarea id="custom-body" rows="3" spellcheck="false"></textarea>
+            <p class="note" data-i18n="customTemplateHint">
+              占位符：{{text}} 原文、{{textJson}} 带引号的原文、{{from}} / {{to}} 语言码、{{toName}} 语言名、{{token}} 令牌、{{model}} 模型名
+            </p>
+          </div>
+
+          <div class="trial">
+            <button type="button" class="quiet" id="custom-test" data-i18n="customTestButton">测试连接</button>
+            <span class="result" id="custom-result"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 第三级：目标语言与自动翻译 -->
+      <section class="rung" id="rung-prefs">
+        <div class="rung-head">
+          <h2 data-i18n="preferencesTitle">翻译偏好</h2>
+        </div>
+
+        <div class="field">
+          <label for="target-language" data-i18n="defaultLanguageLabel">默认目标语言</label>
+          <select id="target-language"></select>
+          <p class="note" data-i18n="defaultLanguageDesc">点击「翻译此页」时使用的目标语言</p>
+        </div>
+
+        <div class="field">
+          <label for="blacklist" data-i18n="blacklistLabel">不翻译这些站点</label>
+          <textarea id="blacklist" rows="3" spellcheck="false"
+            data-i18n-placeholder="blacklistPlaceholder"></textarea>
+          <p class="note" data-i18n="blacklistHint">
+            每行一个域名，支持 *.example.com 与 /path 前缀。命中的站点不会翻译，适合银行、后台、代码托管等页面。
+          </p>
+        </div>
+
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" id="auto-translate">
+            <span>
+              <strong data-i18n="autoTranslateLabel">自动翻译非目标语言页面</strong>
+              <span data-i18n="autoTranslateDesc">打开网页时，若页面语言与目标语言不同则自动翻译</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" id="use-offline">
+            <span>
+              <strong data-i18n="useOfflineLabel">优先使用端侧翻译（推荐）</strong>
+              <span data-i18n="useOfflineDesc">Chrome 内置 AI 本地翻译，不联网不限流；Edge 无此能力时自动跳过。关闭则始终使用在线引擎。</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label for="translated-style" data-i18n="translatedStyleLabel">译文样式</label>
+          <select id="translated-style">
+            <option value="none" data-i18n="styleNone">无标记</option>
+            <option value="underline" data-i18n="styleUnderline">下划线标记译文</option>
+            <option value="highlight" data-i18n="styleHighlight">高亮底色标记译文</option>
+          </select>
+          <p class="note" data-i18n="translatedStyleHint">
+            用颜色区分译文与原文，方便对照阅读。数据仍写入 data 属性，不改动页面 DOM。
+          </p>
+        </div>
+      </section>
     </div>
 
-    <div class="form-group">
-      <label for="engine" data-i18n="translationServiceLabel">翻译引擎</label>
-      <p class="desc" data-i18n="engineDesc">Google 免费接口开箱即用；MyMemory 实测可用、独立兜底；Lingva 实例可用性因地区而异；Azure Translator 适合有订阅密钥的用户</p>
-      <select id="engine">
-        <option value="google">Google（免费）</option>
-        <option value="lingva">Lingva（Google 镜像，实例可用性因地区而异）</option>
-        <option value="mymemory">MyMemory（免密钥，有日配额）</option>
-        <option value="bing">Azure Translator（需密钥）</option>
-      </select>
-      <div class="engine-status" id="engine-status">检测引擎状态…</div>
+    <div class="footer-bar">
+      <button type="button" class="primary" id="save-btn" data-i18n="saveSettingsButton">保存设置</button>
+      <span class="saved" id="status"></span>
     </div>
 
-    <div class="form-group" id="azure-settings">
-      <label for="api-key" data-i18n="apiKeyLabel">Azure Translator 密钥</label>
-      <input type="password" id="api-key" data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
-      <p class="hint" data-i18n="apiKeyHint">在 <a href="https://portal.azure.com" target="_blank" rel="noreferrer">Azure Portal</a> 创建 Translator 资源后获取密钥。旧版 Bing 免费端点已于 2026-11 失效，因此本引擎必须配置密钥。</p>
-    </div>
-
-    <div class="form-group">
-      <label class="checkbox">
-        <input type="checkbox" id="auto-translate">
-        <span class="text">
-          <strong data-i18n="autoTranslateLabel">自动翻译非目标语言页面</strong>
-          <span data-i18n="autoTranslateDesc">打开网页时，若页面语言与目标语言不同则自动翻译</span>
-        </span>
-      </label>
-    </div>
-
-    <div class="actions">
-      <button id="save-btn" data-i18n="saveSettingsButton">保存设置</button>
-    </div>
-
-    <div class="status" id="status"></div>
-
-    <div class="howto">
+    <div class="colophon">
       <h2 data-i18n="howToUseTitle">使用方法</h2>
-      <ol>
+      <ul>
         <li data-i18n="howToUseStep1">点击工具栏图标打开弹窗</li>
-        <li data-i18n="howToUseStep2">选择目标语言与翻译引擎</li>
-        <li data-i18n="howToUseStep3">点击「翻译页面」，或用快捷键 <kbd>Alt+T</kbd> 切换</li>
+        <li data-i18n="howToUseStep2">选择目标语言与引擎</li>
+        <li data-i18n="howToUseStep3">点击「翻译此页」，或按 <kbd>Alt</kbd>+<kbd>T</kbd> 切换</li>
         <li data-i18n="howToUseStep4">右键菜单可翻译选中的文本</li>
-      </ol>
+      </ul>
     </div>
   </div>
 

@@ -120,29 +120,112 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     });
   }
 
-  // 4. 兜底：未填充的位置用原文，由上层凭 degraded 决定是否提示用户
+  // 4. 兜底：未填充的位置用原文占位（不写缓存，避免把「翻译失败」污染成缓存命中）
+  let filled = 0;
   for (let index = 0; index < results.length; index++) {
-    if (!results[index]) results[index] = { text: texts[index], detected: null };
+    if (results[index]) {
+      filled++;
+      continue;
+    }
+    results[index] = { text: texts[index], detected: null };
   }
 
+  // ok 的语义是「这批文本有没有拿到译文」，不是「有没有真的发出请求」。
+  // 纯缓存命中时 translated 为 null 但结果齐全；反之请求成功也可能有段落回落原文。
+  // 以「实际填充了多少」为准，才不会把缓存命中误报成请求失败。
+  const ok = filled === texts.length;
+
   return {
-    ok: translated !== null,
+    ok,
     results,
     engine: usedEngine,
     degraded,
-    error: errorMessage,
+    error: ok ? errorMessage : errorMessage || `仅 ${filled}/${texts.length} 段获得译文`,
   };
 }
 
 /**
  * 免密钥引擎的降级顺序。Google 被限流/不可达时依次后移。
  *
- * MyMemory 排第二：2026-11 实测（Node 直连 + 真实 Chrome 页面上下文均 200）
- * 且独立于 Google 基础设施，是当前唯一实证可靠的兜底。
+ * custom 排第二：一旦用户配了自建/中转接口，那通常就是他在本网络下唯一稳定的通路，
+ * 优先于任何公共免费接口；未配置时 isAvailable() 为 false，会被直接跳过。
+ * MyMemory 排第三：2026-11 实测（Node 直连 + 真实 Chrome 页面上下文均 200）
+ * 且独立于 Google 基础设施，是当前唯一实证可靠的公共兜底。
  * Lingva 排末位：其公共实例多在 Cloudflare 之后，部分地区网络下整体不可达
  * （实例池轮换最坏 4×8s），放在前面会拖慢真正可用的兜底。
  */
-const FALLBACK_CHAIN = ["google", "mymemory", "lingva"];
+const FALLBACK_CHAIN = ["google", "custom", "mymemory", "lingva"];
+
+/**
+ * 引擎熔断冷却时间。
+ *
+ * 没有熔断时，Google 被墙的代价是**每个批次**都要重付一遍超时（10s）才能降级；
+ * 一页 500 个单元 = 5 个批次 = 多等 50 秒，用户体感就是「一直在转、一直失败」。
+ * 失败后冷却 30 秒内直接跳过，下一个批次立刻走可用引擎。
+ */
+const ENGINE_COOLDOWN_MS = 30000;
+
+/** @type {Map<string, {until: number, reason: string}>} 引擎名 → 冷却到期时间与失败原因 */
+const cooldowns = new Map();
+
+/**
+ * 查询引擎是否处于冷却期。
+ * @param {string} name 引擎名
+ * @param {number} now 当前时间戳
+ * @return {?{until: number, reason: string}} 冷却信息，不在冷却期为 null
+ */
+function coolingInfo(name, now) {
+  const entry = cooldowns.get(name);
+  if (!entry) return null;
+  if (now >= entry.until) {
+    cooldowns.delete(name);
+    return null;
+  }
+  return entry;
+}
+
+/**
+ * 标记引擎失败，进入冷却。
+ * @param {string} name 引擎名
+ * @param {string} reason 失败原因
+ * @return {void}
+ */
+function coolDown(name, reason) {
+  cooldowns.set(name, { until: Date.now() + ENGINE_COOLDOWN_MS, reason: String(reason || "") });
+}
+
+/**
+ * 引擎成功后清除冷却。
+ * @param {string} name 引擎名
+ * @return {void}
+ */
+function clearCooldown(name) {
+  cooldowns.delete(name);
+}
+
+/**
+ * 清空熔断状态。设置变更或用户手动重试时调用，让引擎立刻重新被考虑。
+ * @return {void}
+ */
+export function resetEngineHealth() {
+  cooldowns.clear();
+}
+
+/**
+ * 当前各引擎健康状态（供调试与状态展示）。
+ * @return {Object<string, {cooling: boolean, until: ?number, reason: ?string}>} 健康状态
+ */
+export function getEngineHealth() {
+  const now = Date.now();
+  const health = {};
+  for (const [name, entry] of cooldowns) {
+    health[name] = now < entry.until ? { cooling: true, until: entry.until, reason: entry.reason } : null;
+  }
+  for (const [name, value] of Object.entries(health)) {
+    if (!value) delete health[name];
+  }
+  return health;
+}
 
 /**
  * 执行一次批量请求，按降级链逐个尝试可用引擎。
@@ -157,27 +240,54 @@ async function runWithFallback(texts, from, to, engineName) {
   const settings = await getSettings();
 
   // 尝试序列：首选引擎在前，其余按固定链序去重
-  const chain = [engineName, ...FALLBACK_CHAIN.filter(name => name !== engineName)];
+  const chain = [];
+  for (const name of [engineName, ...FALLBACK_CHAIN]) {
+    if (name && !chain.includes(name)) chain.push(name);
+  }
+
+  const now = Date.now();
+  /** @type {string[]} 未熔断的引擎，优先尝试 */
+  const ready = [];
+  /** @type {string[]} 熔断中的引擎，只在全部失败后兜底再试一次 */
+  const cooling = [];
+  for (const name of chain) {
+    if (coolingInfo(name, now)) cooling.push(name);
+    else ready.push(name);
+  }
+
   /** @type {string[]} */
   const failures = [];
+  /** @type {Array<string[]>} */
+  const passes = ready.length > 0 ? [ready, cooling] : [cooling];
 
-  for (const name of chain) {
-    const engine = createEngine(name, settings.apiKey || null);
-    if (!(await engine.isAvailable())) {
-      failures.push(`${name}: 未配置`);
-      continue;
-    }
-    try {
-      const results = await engine.translate(texts, from, to);
-      const degraded = name !== engineName;
-      return {
-        results,
-        engine: name,
-        degraded,
-        error: degraded ? `已从 ${engineName} 降级到 ${name}` : null,
-      };
-    } catch (error) {
-      failures.push(`${name}: ${error.message}`);
+  for (const pass of passes) {
+    for (const name of pass) {
+      let engine;
+      try {
+        engine = createEngine(name, settings.apiKey || null, settings);
+        if (!(await engine.isAvailable())) {
+          failures.push(`${name}: 未配置`);
+          continue;
+        }
+      } catch (error) {
+        failures.push(`${name}: ${error.message}`);
+        continue;
+      }
+
+      try {
+        const results = await engine.translate(texts, from, to);
+        clearCooldown(name);
+        const degraded = name !== engineName;
+        return {
+          results,
+          engine: name,
+          degraded,
+          error: degraded ? `已从 ${engineName} 降级到 ${name}` : null,
+        };
+      } catch (error) {
+        coolDown(name, error.message);
+        failures.push(`${name}: ${error.message}`);
+      }
     }
   }
 

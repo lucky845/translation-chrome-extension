@@ -30,7 +30,15 @@
     "https://translate.plausibility.cloud/*",
     "https://lingva.lunar.icu/*"
   ],
-  "permissions": ["storage", "contextMenus", "activeTab"],
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": true
@@ -45,9 +53,17 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
       "run_at": "document_idle",
-      "js": ["content/dom-core.js", "content/content.js"],
+      "js": [
+        "content/dom-core.js",
+        "content/blacklist.js",
+        "content/offline-translator.js",
+        "content/content.js"
+      ],
       "all_frames": false
     }
   ],

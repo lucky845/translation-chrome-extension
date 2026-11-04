@@ -8,9 +8,27 @@ export const DEFAULT_SETTINGS = {
   engine: "google",
   autoTranslate: false,
   apiKey: "",
+  // 自定义接口（对接自建 DeepLX / LibreTranslate / 任意 OpenAI 兼容中转）
+  // 空字段一律回落到所选预设的默认值，用户只填地址也能跑。
+  customPreset: "deeplx",
+  customUrl: "",
+  customMethod: "",
+  customHeaders: "",
+  customBody: "",
+  customResponsePath: "",
+  customToken: "",
+  customModel: "",
+  // 不翻译的域名，逗号或换行分隔，支持 *.example.com 通配
+  blacklist: "",
+  // 端侧翻译（Chrome 内置 AI）：auto=支持就优先用；off=始终走在线引擎。
+  // Edge 没有 Chrome 的 Translator API，auto 模式下会自动跳过，等价于 off。
+  useOffline: "auto",
+  // 译文样式：none=无标记；underline=下划线；highlight=高亮底色。
+  // 通过给 [data-tp-translated] 注入 CSS 实现，不改 DOM 结构。
+  translatedStyle: "none",
 };
 
-const VALID_ENGINES = ["google", "bing", "lingva", "mymemory"];
+const VALID_ENGINES = ["google", "bing", "lingva", "mymemory", "custom"];
 
 let cache = null;
 
@@ -43,6 +61,9 @@ export async function updateSettings(patch) {
   return getSettings();
 }
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync") cache = null;
-});
+// Node 单测环境没有 chrome API，跳过监听（避免 import 即崩）。
+if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync") cache = null;
+  });
+}

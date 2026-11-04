@@ -97,6 +97,7 @@ export default [
         self: "readonly",
         // fetch 超时控制（Service Worker 与 Node 20+ 均内置）
         AbortSignal: "readonly",
+        AbortController: "readonly",
       },
     },
   },
@@ -109,6 +110,29 @@ export default [
         location: "readonly",
         history: "readonly",
         window: "readonly",
+        IntersectionObserver: "readonly",
+        MutationObserver: "readonly",
+      },
+    },
+  },
+
+  {
+    files: ["content/blacklist.js"],
+    languageOptions: {
+      globals: {
+        window: "readonly",
+        URL: "readonly",
+        module: "writable",
+      },
+    },
+  },
+
+  {
+    files: ["content/offline-translator.js"],
+    languageOptions: {
+      globals: {
+        // 端侧模块通过 module.exports 暴露给 Node 测试
+        module: "writable",
       },
     },
   },

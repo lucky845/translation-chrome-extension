@@ -10,7 +10,26 @@
  *   [["译文", "检测到的语言"], [["译文", "en"], ...]] 两种形态都可能出现，统一归一化。
  */
 
+import {
+  BaseEngine,
+  RetryableError,
+  FatalTranslationError,
+  isNetworkFailure,
+  sleep,
+  byteLength,
+} from "./engines/base.js";
+import { splitSentences } from "./engines/text.js";
+import { CustomEngine } from "./engines/custom.js";
+
+// 对外保持原有导出路径（测试与调用方都从 engine.js 取）：
+export { RetryableError, FatalTranslationError, splitSentences };
+
 const ENDPOINT = "https://translate.googleapis.com/translate_a/t";
+
+// 单条兜底端点：返回结构化 JSON（{sentences:[{trans}], src}），
+// 比 translate_a/t 的嵌套数组健壮得多；批量响应解析失败时用它逐条补。
+// 端点：translate_a/single?dj=1。
+const SINGLE_ENDPOINT = "https://translate.googleapis.com/translate_a/single";
 
 // 单次请求上限。实测 400 条普通句子会 400 错误，200 条稳定；body 控制在 48KB 内。
 const MAX_TEXTS_PER_CHUNK = 200;
@@ -24,31 +43,7 @@ const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 500;
 
 // 请求超时，防止 fetch 永久挂起。
-const REQUEST_TIMEOUT_MS = 15000;
-
-/**
- * 引擎基类。新增引擎只需实现 translate 与 isAvailable。
- */
-class BaseEngine {
-  /**
-   * 是否可用于实际翻译。
-   * @return {Promise<boolean>}
-   */
-  async isAvailable() {
-    return true;
-  }
-
-  /**
-   * 批量翻译。
-   * @param {string[]} texts 待翻译文本
-   * @param {string} fromLang 源语言，'auto' 表示自动检测
-   * @param {string} toLang 目标语言
-   * @return {Promise<Array<{text: string, detected: ?string}>>} 与输入等长、同序
-   */
-  async translate() {
-    throw new Error("translate 未实现");
-  }
-}
+const REQUEST_TIMEOUT_MS = 10000;
 
 /**
  * Google 免费端点。
@@ -105,11 +100,66 @@ export class GoogleEngine extends BaseEngine {
         return data.map(GoogleEngine.normalizeItem);
       } catch (error) {
         if (error instanceof FatalTranslationError) throw error;
-        // 超时/网络中断/限流/结构异常都重试
+        // 网络层失败（被墙/断网/超时）重试只会再等一个超时周期，直接交给降级链
+        if (isNetworkFailure(error)) {
+          throw new FatalTranslationError(`网络不可达：${error.message || error.name}`);
+        }
+        // 限流/响应结构异常才值得重试
         lastError = error;
       }
     }
-    throw lastError || new Error("翻译请求失败");
+    // 批量端点反复失败：改用结构化单条端点逐条补，
+    // 比整批放弃或原样返回更有价值（长页面里丢一两条很常见）。
+    try {
+      const results = [];
+      for (const text of texts) {
+        results.push(await this.translateOne(text, fromLang, toLang));
+      }
+      return results;
+    } catch (fallbackError) {
+      throw lastError || fallbackError || new Error("翻译请求失败");
+    }
+  }
+
+  /**
+   * 单条翻译，走结构化 JSON 端点。
+   *
+   * 为什么需要：translate_a/t 的批量响应是位置相关的嵌套数组，
+   * 一旦服务端返回结构变化或数量不符，整批都会失败。
+   * 结构化端点有明确的 sentences[].trans 与 src，适合作为逐条兜底。
+   *
+   * @param {string} text 待翻译文本
+   * @param {string} fromLang 源语言
+   * @param {string} toLang 目标语言
+   * @return {Promise<{text: string, detected: ?string}>} 结果
+   */
+  async translateOne(text, fromLang, toLang) {
+    const params = new URLSearchParams({
+      client: "gtx",
+      sl: fromLang,
+      tl: toLang,
+      dt: "t",
+      dj: "1",
+      ie: "UTF-8",
+      q: text,
+    });
+
+    const response = await fetch(`${SINGLE_ENDPOINT}?${params.toString()}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new RetryableError(`单条翻译 HTTP ${response.status}`);
+
+    const data = await response.json();
+    const sentences = data && data.sentences;
+    if (!Array.isArray(sentences)) throw new RetryableError("单条翻译响应缺少 sentences");
+
+    // 拼接所有分段，保留原文顺序与标点
+    const translated = sentences.map(item => (item && item.trans) || "").join("");
+    return {
+      text: translated,
+      detected: typeof data.src === "string" ? data.src : null,
+    };
   }
 
   /**
@@ -140,26 +190,6 @@ export class GoogleEngine extends BaseEngine {
     await Promise.all(workers);
 
     return results.flat();
-  }
-}
-
-/**
- * 可重试错误：限流、超时、网络中断、响应结构异常。
- */
-export class RetryableError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "RetryableError";
-  }
-}
-
-/**
- * 不可恢复的错误（如 4xx），不应重试也不应触发降级循环。
- */
-export class FatalTranslationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "FatalTranslationError";
   }
 }
 
@@ -235,15 +265,19 @@ export class BingEngine extends BaseEngine {
  *
  * 实测（2026-11）：免密钥、匿名 GET 即可用，支持源语言 "Autodetect"，
  * 顶层返回 detectedLanguage 与 quotaFinished 字段。
- * 限制：单条 ≤ 500 字节；匿名按 IP 限日配额、高频触发限流——因此逐条串行、
- * 带节流间隔，超长文本按句拆片请求后拼接。
+ * 限制：单条 ≤ 500 字节；匿名按 IP 限日配额、高频触发限流。
+ * 因此保持小并发（实测 24 条：串行 29.1s、并发 3 为 5.1s、并发 8 为 2.1s，全程 200 无 429），
+ * 取 4 作平衡：既把「逐条 1.2s 延迟」压下去，又不至于把匿名配额撞上限。
+ * 超长文本按句拆片后并发请求，再按原序拼接。
  */
 export class MyMemoryEngine extends BaseEngine {
   static ENDPOINT = "https://api.mymemory.translated.net/get";
   // 单条请求的安全长度（MyMemory 官方上限 500 字节，取余量防 URL 编码膨胀）
   static MAX_SEGMENT_CHARS = 450;
-  // 逐条请求节流：匿名配额宝贵，宁慢勿封
-  static THROTTLE_MS = 150;
+  // 单条请求间隔（每个 worker 自己的节流）：匿名配额宝贵，宁慢勿封
+  static THROTTLE_MS = 60;
+  // 并发 worker 数：MyMemory 单请求 RTT 约 0.6~1.2s，串行翻一页要几分钟
+  static MAX_CONCURRENCY = 4;
 
   /**
    * 恒可用：免密钥。配额耗尽在请求时以错误形式暴露并走降级链。
@@ -272,12 +306,40 @@ export class MyMemoryEngine extends BaseEngine {
   async translate(texts, fromLang, toLang) {
     const from = MyMemoryEngine.mapLang(fromLang);
     const to = MyMemoryEngine.mapLang(toLang);
-    const results = [];
-    for (let index = 0; index < texts.length; index++) {
-      if (index > 0) await sleep(MyMemoryEngine.THROTTLE_MS);
-      results.push(await this.translateOne(texts[index], from, to));
-    }
-    return results;
+
+    // 先按「文本 → 句片」铺平任务，再并发跑，最后按原序拼回
+    const plans = texts.map(text =>
+      text && text.trim() ? splitSentences(text, MyMemoryEngine.MAX_SEGMENT_CHARS) : []
+    );
+    const tasks = [];
+    plans.forEach((segments, textIndex) => {
+      segments.forEach((segment, segmentIndex) => tasks.push({ textIndex, segmentIndex, segment }));
+    });
+
+    const filled = plans.map(segments => new Array(segments.length));
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < tasks.length) {
+        const task = tasks[cursor++];
+        const item = await this.requestSegment(task.segment, from, to);
+        filled[task.textIndex][task.segmentIndex] = item;
+        if (cursor < tasks.length) await sleep(MyMemoryEngine.THROTTLE_MS);
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(MyMemoryEngine.MAX_CONCURRENCY, tasks.length) }, worker);
+    await Promise.all(workers);
+
+    return texts.map((text, textIndex) => {
+      const items = filled[textIndex];
+      if (!items || items.length === 0) return { text, detected: null };
+      let detected = null;
+      for (const item of items) {
+        if (item && item.detected) detected = item.detected;
+      }
+      return { text: items.map(item => (item ? item.text : "")).join(" "), detected };
+    });
   }
 
   /**
@@ -318,21 +380,20 @@ export class MyMemoryEngine extends BaseEngine {
         const response = await fetch(`${MyMemoryEngine.ENDPOINT}?${query.toString()}`, {
           method: "GET",
           headers: {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept": "application/json,text/plain,*/*",
-            "Referer": "https://mymemory.translated.net/",
-            "Origin": "https://mymemory.translated.net",
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            Accept: "application/json,text/plain,*/*",
+            Referer: "https://mymemory.translated.net/",
+            Origin: "https://mymemory.translated.net",
           },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!response.ok) {
-          if (response.status === 429) {
+          // 429/5xx 是瞬时的；401/403/400 重试也不会有不同结果，反而让用户多等几秒
+          if (response.status === 429 || response.status >= 500) {
             throw new RetryableError(`MyMemory HTTP ${response.status}`);
           }
-          if (response.status >= 400 && response.status < 500) {
-            throw new RetryableError(`MyMemory HTTP ${response.status}`);
-          }
-          throw new RetryableError(`MyMemory HTTP ${response.status}`);
+          throw new FatalTranslationError(`MyMemory 拒绝请求（HTTP ${response.status}）`);
         }
         const data = await response.json();
         if (!data || !data.responseData || typeof data.responseData.translatedText !== "string") {
@@ -354,6 +415,9 @@ export class MyMemoryEngine extends BaseEngine {
         };
       } catch (error) {
         if (error instanceof FatalTranslationError) throw error;
+        if (isNetworkFailure(error)) {
+          throw new FatalTranslationError(`MyMemory 网络不可达：${error.message || error.name}`);
+        }
         lastError = error;
       }
     }
@@ -487,42 +551,6 @@ export class LingvaEngine extends BaseEngine {
 }
 
 /**
- * 按句边界把长文本拆成不超过 maxChars 的片段（句子尽量完整，超长单句硬切）。
- * 导出供单元测试。
- * @param {string} text 原文
- * @param {number} maxChars 单片字符上限
- * @return {string[]} 片段数组（拼接顺序与原文一致）
- */
-export function splitSentences(text, maxChars) {
-  if (!text || text.length <= maxChars) return text ? [text] : [];
-  // 中英文句末标点后跟空白或直接结束都视为句边界
-  const sentences = text.split(/(?<=[.!?。！？；;])\s*/);
-  const segments = [];
-  let current = "";
-  for (const sentence of sentences) {
-    if (sentence.length > maxChars) {
-      // 单句超限：硬切成固定长度的片
-      if (current) {
-        segments.push(current);
-        current = "";
-      }
-      for (let offset = 0; offset < sentence.length; offset += maxChars) {
-        segments.push(sentence.slice(offset, offset + maxChars));
-      }
-      continue;
-    }
-    if (current.length + sentence.length + 1 > maxChars) {
-      segments.push(current);
-      current = sentence;
-    } else {
-      current = current ? `${current} ${sentence}` : sentence;
-    }
-  }
-  if (current) segments.push(current);
-  return segments;
-}
-
-/**
  * 按请求体大小与条数切块。
  * @param {string[]} texts 全量文本
  * @return {string[][]} 分块结果
@@ -549,40 +577,16 @@ function splitIntoChunks(texts) {
 }
 
 /**
- * UTF-8 字节长度，用于控制请求体大小。
- * @param {string} text 文本
- * @return {number} 字节数
- */
-function byteLength(text) {
-  let bytes = 0;
-  for (const char of text) {
-    const code = char.codePointAt(0);
-    if (code < 0x80) bytes += 1;
-    else if (code < 0x800) bytes += 2;
-    else if (code < 0x10000) bytes += 3;
-    else bytes += 4;
-  }
-  return bytes;
-}
-
-/**
- * 延迟。
- * @param {number} ms 毫秒
- * @return {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
  * 按设置创建引擎实例。
  * @param {string} name 引擎名
  * @param {?string} apiKey Bing 密钥
+ * @param {?Object} settings 完整设置（自定义接口需要）
  * @return {BaseEngine} 引擎实例
  */
-export function createEngine(name, apiKey = null) {
+export function createEngine(name, apiKey = null, settings = null) {
   if (name === "bing") return new BingEngine(apiKey);
   if (name === "mymemory") return new MyMemoryEngine();
   if (name === "lingva") return new LingvaEngine();
+  if (name === "custom") return new CustomEngine(settings);
   return new GoogleEngine();
 }

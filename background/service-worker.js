@@ -9,7 +9,11 @@
  */
 
 import { getSettings, updateSettings } from "./settings.js";
-import { translateTexts, clearCache } from "./translator.js";
+import { translateTexts, clearCache, resetEngineHealth } from "./translator.js";
+import { CUSTOM_PRESETS, CUSTOM_PRESET_NAMES } from "./engines/custom.js";
+
+/** 单个引擎探测的硬超时：探测只是界面提示，绝不能拖住翻译 */
+const PROBE_TIMEOUT_MS = 6000;
 
 // ---- 消息路由 ----
 
@@ -60,26 +64,12 @@ const handlers = {
    * @return {Promise<Object>} 设置
    */
   async getSettings() {
+    // 只读设置，绝不发网络请求。
+    // 之前这里顺带跑 engineAvailability()，导致「点翻译」先等三个引擎的网络探测
+    // （每个还可能重试 3 次×10s 超时），严重时点一次要卡一分半才开始翻。
+    // 探测属于界面展示信息，由 getEngineStatus 按需提供。
     const settings = await getSettings();
-    try {
-      const engines = await engineAvailability(settings);
-      return { ok: true, settings, engines };
-    } catch (error) {
-      // 探测失败不影响设置读取，返回默认可用状态
-      return {
-        ok: true,
-        settings,
-        engines: {
-          google: { available: true, reason: "探测失败（可直接尝试翻译）" },
-          bing: {
-            available: Boolean(settings.apiKey),
-            reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
-          },
-          mymemory: { available: true, reason: "探测失败（可直接尝试翻译）" },
-          lingva: { available: true, reason: "探测失败（可直接尝试翻译）" },
-        },
-      };
-    }
+    return { ok: true, settings, engines: staticEngineAvailability(settings) };
   },
 
   /**
@@ -90,6 +80,8 @@ const handlers = {
   async setSettings(message) {
     const settings = await updateSettings(message.settings || {});
     clearCache();
+    // 用户刚刚改过引擎/密钥：清掉熔断，让新配置立刻生效，不用等 30 秒冷却
+    resetEngineHealth();
     return { ok: true, settings };
   },
 
@@ -118,6 +110,27 @@ const handlers = {
   },
 
   /**
+   * 自定义接口预设定义（供设置页渲染，避免前端重复维护一份）。
+   * @return {Promise<Object>} 预设列表
+   */
+  async getCustomPresets() {
+    const presets = CUSTOM_PRESET_NAMES.map(name => {
+      const preset = CUSTOM_PRESETS[name];
+      return {
+        name,
+        label: preset.label,
+        url: preset.url || "",
+        method: preset.method || "POST",
+        headers: preset.headers || "",
+        body: preset.body || "",
+        responsePath: preset.responsePath || "",
+        model: preset.model || "",
+      };
+    });
+    return { ok: true, presets };
+  },
+
+  /**
    * 引擎可用性探测（供 popup/options 显示真实状态）。
    * @return {Promise<Object>} 可用性
    */
@@ -138,6 +151,10 @@ const handlers = {
             },
             mymemory: { available: true, reason: "探测失败（可直接尝试翻译）" },
             lingva: { available: true, reason: "探测失败（可直接尝试翻译）" },
+            custom: {
+              available: Boolean(String(settings.customUrl || "").trim()),
+              reason: String(settings.customUrl || "").trim() ? null : "未配置接口地址（设置 → 引擎 → 自定义接口）",
+            },
           },
         };
       }
@@ -146,6 +163,29 @@ const handlers = {
     }
   },
 };
+
+/**
+ * 仅按配置判断引擎可用性，不发任何网络请求。
+ * 用于 getSettings 这种「只要配置」的场景，保证毫秒级返回。
+ * @param {Object} settings 设置
+ * @return {Object} 各引擎状态
+ */
+function staticEngineAvailability(settings) {
+  const hasCustom = Boolean(String(settings.customUrl || "").trim());
+  return {
+    google: { available: true, reason: null },
+    bing: {
+      available: Boolean(settings.apiKey),
+      reason: settings.apiKey ? null : "需要 Azure 翻译密钥",
+    },
+    mymemory: { available: true, reason: null },
+    lingva: { available: true, reason: null },
+    custom: {
+      available: hasCustom,
+      reason: hasCustom ? null : "未配置接口地址（设置 → 引擎 → 自定义接口）",
+    },
+  };
+}
 
 /**
  * 探测各引擎当前是否真实可用。
@@ -157,43 +197,33 @@ const handlers = {
  * @return {Promise<Object>} 各引擎状态
  */
 async function engineAvailability(settings) {
-  const status = {
-    google: { available: true, reason: null },
-    bing: {
-      available: Boolean(settings.apiKey),
-      reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
-    },
-    mymemory: { available: true, reason: null },
-    lingva: { available: true, reason: null },
+  const status = staticEngineAvailability(settings);
+
+  // 三个探测并行跑，各自 6 秒封顶。
+  // 之前是串行 + 每个走完整重试链，最坏能阻塞一分半。
+  const probe = async (name, apply) => {
+    try {
+      const result = await Promise.race([
+        translateTexts(["hi"], "en", settings.targetLanguage, name),
+        new Promise(resolve => setTimeout(() => resolve({ ok: false, error: "探测超时" }), PROBE_TIMEOUT_MS)),
+      ]);
+      apply(result);
+    } catch (error) {
+      apply({ ok: false, error: error.message || String(error) });
+    }
   };
 
-  // 轻量探测：国内网络普遍无法直连免费接口，仅用于显示警告，不阻断使用
-  try {
-    const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "google");
-    if (!probe.ok) {
-      status.google.reason = probe.error || "Google 探测失败（可直接尝试翻译）";
-    }
-  } catch (error) {
-    status.google.reason = "Google 探测失败（可直接尝试翻译）";
-  }
-
-  try {
-    const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "mymemory");
-    if (!probe.ok) {
-      status.mymemory.reason = probe.error || "MyMemory 探测失败（可直接尝试翻译）";
-    }
-  } catch (error) {
-    status.mymemory.reason = "MyMemory 探测失败（可直接尝试翻译）";
-  }
-
-  try {
-    const probe = await translateTexts(["hi"], "en", settings.targetLanguage, "lingva");
-    if (!probe.ok) {
-      status.lingva.reason = probe.error || "Lingva 探测失败（可直接尝试翻译）";
-    }
-  } catch (error) {
-    status.lingva.reason = "Lingva 探测失败（可直接尝试翻译）";
-  }
+  await Promise.all([
+    probe("google", result => {
+      if (!result.ok) status.google.reason = result.error || "Google 探测失败（可直接尝试翻译）";
+    }),
+    probe("mymemory", result => {
+      if (!result.ok) status.mymemory.reason = result.error || "MyMemory 探测失败（可直接尝试翻译）";
+    }),
+    probe("lingva", result => {
+      if (!result.ok) status.lingva.reason = result.error || "Lingva 探测失败（可直接尝试翻译）";
+    }),
+  ]);
 
   return status;
 }

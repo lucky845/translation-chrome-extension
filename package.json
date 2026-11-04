@@ -14,7 +14,7 @@
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node test/dom.test.mjs && node test/manifest.test.mjs",
+    "test": "node test/dom.test.mjs && node test/blacklist.test.mjs && node test/offline.test.mjs && node test/content.test.mjs && node test/options.test.mjs && node test/manifest.test.mjs",
     "test:engine": "node test/engine.test.mjs"
   },
   "devDependencies": {

@@ -175,7 +175,9 @@ async function test(name, fn) {
     if (message.includes("HTTP 429") || message.startsWith("SKIP:")) {
       rateLimited = true;
       results.push({ name, ok: true, skipped: true });
-      console.log(`  ⏭️  ${name}（${message.startsWith("SKIP:") ? message.slice(6) : "出口被 Google 反爬限流，管线已在其他用例验证"}）`);
+      console.log(
+        `  ⏭️  ${name}（${message.startsWith("SKIP:") ? message.slice(6) : "出口被 Google 反爬限流，管线已在其他用例验证"}）`
+      );
       return;
     }
     results.push({ name, ok: false, error });
@@ -201,7 +203,9 @@ async function evaluate(cdp, expression, contextId) {
   else if (cdp.defaultContextId !== undefined) params.contextId = cdp.defaultContextId;
   const result = await cdp.send("Runtime.evaluate", params);
   if (result.exceptionDetails) {
-    throw new Error("页面求值异常: " + JSON.stringify(result.exceptionDetails.exception?.description || result.exceptionDetails.text));
+    throw new Error(
+      "页面求值异常: " + JSON.stringify(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+    );
   }
   return result.result.value;
 }
@@ -280,7 +284,10 @@ const userDataDir = mkdtempSync(join(tmpdir(), "tp-e2e-"));
 // Chrome 137+ 正式版（branded）在 headless 下忽略 --load-extension，
 // 必须用 Chrome for Testing / Chromium。按优先级探测本机可用二进制。
 const chromeCandidates = [
-  join(homedir(), ".cache/puppeteer/chrome/mac_arm-131.0.6778.204/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+  join(
+    homedir(),
+    ".cache/puppeteer/chrome/mac_arm-131.0.6778.204/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+  ),
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
@@ -329,10 +336,9 @@ try {
 
   // 先开空白页连上 CDP（Runtime.enable 后才能捕获 executionContextCreated），
   // 再导航到测试页——这样才不会错过 content script 隔离世界的创建事件
-  const created = await (await fetch(
-    `http://127.0.0.1:${DEBUG_PORT}/json/new?url=about:blank`,
-    { method: "PUT" }
-  )).json();
+  const created = await (
+    await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/new?url=about:blank`, { method: "PUT" })
+  ).json();
   const page = new Cdp(created.webSocketDebuggerUrl);
   await page.connect();
   await page.send("Page.enable");
@@ -350,7 +356,10 @@ try {
   });
 
   await test("dom-core 挂载成功", async () => {
-    const mounted = await evaluate(page, "typeof window.__TP_DOM__ === 'object' && typeof window.__TP_DOM__.collectUnits === 'function'");
+    const mounted = await evaluate(
+      page,
+      "typeof window.__TP_DOM__ === 'object' && typeof window.__TP_DOM__.collectUnits === 'function'"
+    );
     if (!mounted) throw new Error("__TP_DOM__ 未挂载");
   });
 
@@ -380,10 +389,13 @@ try {
 
   await test("标题与段落被翻译为中文", async () => {
     if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
-    const texts = await evaluate(page, `({
+    const texts = await evaluate(
+      page,
+      `({
       title: document.getElementById("title").textContent,
       para1: document.getElementById("para1").textContent,
-    })`);
+    })`
+    );
     const hasHan = str => /[\u4e00-\u9fff]/.test(str);
     if (!hasHan(texts.title)) throw new Error(`标题未翻译: ${texts.title}`);
     if (!hasHan(texts.para1)) throw new Error(`段落未翻译: ${texts.para1}`);
@@ -391,13 +403,16 @@ try {
 
   await test("内联结构在译文语序中保留（链接与加粗）", async () => {
     if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
-    const probe = await evaluate(page, `({
+    const probe = await evaluate(
+      page,
+      `({
       link: !!document.querySelector("#para1 a"),
       href: document.querySelector("#para1 a") ? document.querySelector("#para1 a").getAttribute("href") : null,
       bold: !!document.querySelector("#para1 b"),
       img: !!document.querySelector("#para2 img"),
       linkText: document.querySelector("#para1 a") ? document.querySelector("#para1 a").textContent : "",
-    })`);
+    })`
+    );
     if (!probe.link) throw new Error("<a> 元素丢失");
     if (probe.href !== "/docs") throw new Error(`href 丢失: ${probe.href}`);
     if (!probe.bold) throw new Error("<b> 元素丢失");
@@ -412,11 +427,14 @@ try {
 
   await test("块级子元素在浅层单元翻译后幸存", async () => {
     if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
-    const probe = await evaluate(page, `({
+    const probe = await evaluate(
+      page,
+      `({
       intro: document.getElementById("mixed").childNodes[0] ? document.getElementById("mixed").childNodes[0].textContent : "",
       nested: !!document.getElementById("nested"),
       nestedText: document.getElementById("nested") ? document.getElementById("nested").textContent : "",
-    })`);
+    })`
+    );
     if (!/[\u4e00-\u9fff]/.test(probe.intro)) throw new Error(`容器直属文本未翻译: ${JSON.stringify(probe.intro)}`);
     if (!probe.nested) throw new Error("块级子元素 <p> 被销毁");
     if (!/[\u4e00-\u9fff]/.test(probe.nestedText)) throw new Error(`子段落未翻译: ${probe.nestedText}`);
