@@ -37,6 +37,23 @@
   /** 视口外扩边距：提前翻译即将滚入视野的内容，滚动时不会出现空白。 */
   const VIEWPORT_MARGIN = "900px 0px";
 
+  /**
+   * 滚动翻译：视口外这圈内的单元也要立刻翻（约一屏）。
+   * 再往外就停手等滚动——这是「滚动到哪翻到哪」与「一次翻完整页」的分界线。
+   */
+  const LAZY_MARGIN_PX = 1200;
+
+  /**
+   * 空闲多久才继续翻视口外的内容。
+   *
+   * 用户滚动时视口内容轮不到队首就被抢走，反而更慢；
+   * 停下来 1.2 秒说明他在读，这时再补后面的。
+   */
+  const LAZY_IDLE_MS = 1200;
+
+  /** 滚动后等多久重算可见集合（滚动是高频率事件，不能每帧都算）。 */
+  const SCROLL_DEBOUNCE_MS = 120;
+
   /** 动态内容防抖。 */
   const MUTATION_DEBOUNCE_MS = 300;
 
@@ -51,6 +68,15 @@
    * 1200 是权衡：小于大多数引擎的硬上限，又不会把段落切得过碎影响上下文。
    */
   const MAX_UNIT_CHARS = 1200;
+
+  /**
+   * 等待一段时间。
+   * @param {number} ms 毫秒
+   * @return {Promise<void>} 完成
+   */
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
   /** 占位符 token：<0>…</0> 成对，或 <0/> 自闭合。 */
   const PLACEHOLDER_TOKEN = /<(\d+)(\/)?>|<\/(\d+)>/g;
@@ -260,7 +286,7 @@
 
         const remaining = this.units.filter(unit => !unit.translated);
         if (remaining.length > 0) {
-          applied += await this.translateUnits(remaining, target);
+          applied += await this.translateUnits(remaining, target, { lazy: settings.lazyTranslate !== "off" });
         }
 
         // 属性文本：正文翻完再补一轮，复用同一批引擎与缓存。
@@ -429,7 +455,15 @@
       return applied;
     },
 
-    async translateUnits(units, target) {
+    /**
+     * 批量翻译并就地应用译文。
+     * @param {Array<Object>} units 待翻单元
+     * @param {string} target 目标语言
+     * @param {{lazy?: boolean}} [options] lazy=true 时开启滚动翻译（默认开启）
+     * @return {Promise<number>} 应用数量
+     */
+    async translateUnits(units, target, options = {}) {
+      const lazy = options.lazy !== false;
       let applied = 0;
       const pending = units.slice();
       const order = new Map(units.map((unit, index) => [unit, index]));
@@ -472,8 +506,88 @@
 
       const rank = unit => (visible.has(unit) ? 0 : 1);
 
+      // 滚动翻译的分界：LAZY_MARGIN_PX 以内立刻翻，以外挂着等滚动。
+      // 旧实现只排序不清空，整页照样一次翻完——用户滚到一半时
+      // 后台还在替看不见的段落烧配额，滚到哪里都感觉慢。
+      /** 用户停手够久后进入兜底：不再按视口裁剪，把剩下的全部翻完 */
+      let draining = false;
+      const readyNow = unit => {
+        // 关闭滚动翻译 / 已进入兜底：一次翻完整页，不做视口裁剪
+        if (!lazy || draining) return true;
+        const element = unit && unit.element;
+        if (!element || typeof element.getBoundingClientRect !== "function") return true;
+        const rect = element.getBoundingClientRect();
+        // 无布局信息（离屏采集、jsdom）时一律放行，绝不能把内容卡死在队列里
+        if (rect.width === 0 && rect.height === 0) return true;
+        const height = (typeof window !== "undefined" && window.innerHeight) || 800;
+        const margin = Math.max(LAZY_MARGIN_PX, height);
+        return rect.bottom > -margin && rect.top < height + margin;
+      };
+
+      // 用户是否正在滚动：滚动中只翻视口附近，停手后才补远端的
+      let scrolling = false;
+      // 从「现在」起算，不能是 0：0 会让 idleFor() 恒等于当前时间戳（永远 > LAZY_IDLE_MS
+      // 只在几十年前成立），远端单元的空闲唤醒条件永远不满足，翻到一半就停死。
+      let lastScrollAt = Date.now();
+      let scrollTimer = null;
+      const onScroll = () => {
+        scrolling = true;
+        lastScrollAt = Date.now();
+        if (scrollTimer !== null) clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+          scrollTimer = null;
+          scrolling = false;
+        }, SCROLL_DEBOUNCE_MS);
+      };
+      const canLazy = typeof window !== "undefined" && typeof window.addEventListener === "function";
+      if (canLazy) window.addEventListener("scroll", onScroll, { passive: true });
+
+      /** 远端单元（视口外且超出 LAZY_MARGIN_PX），等滚动或等空闲再翻 */
+      let deferred = [];
+      const idleFor = () => Date.now() - lastScrollAt;
+
       try {
-        while (pending.length > 0 && this.state !== "idle" && !this.restoring) {
+        while (this.state !== "idle" && !this.restoring) {
+          if (pending.length === 0) {
+            // 视口内暂时没有待翻内容：等用户滚动或等空闲，再唤醒远端单元。
+            // 注意 pending 已经没有可翻的了，空转只会烧 CPU，
+            // 所以这里要么等到有新内容，要么等到 idle 足够久把远端拉回来。
+            if (deferred.length === 0) break;
+            if (scrolling || idleFor() < LAZY_IDLE_MS) {
+              await delay(SCROLL_DEBOUNCE_MS);
+              // 重新结算：可能用户已经滚到远端区域了
+              const back = [];
+              const stillFar = [];
+              for (const unit of deferred) (readyNow(unit) ? back : stillFar).push(unit);
+              deferred = stillFar;
+              pending.push(...back);
+              continue;
+            }
+            // 用户停下来了：把远端单元一次性拉回来翻完。
+            // 必须同时置 draining —— 否则下一轮 readyNow 又按视口把它们判回
+            // 「不 ready」，推回 deferred，形成永远补不上的死循环
+            // （远端段落本来就在视口外，等到天荒地老也不会变 ready）。
+            draining = true;
+            pending.push(...deferred);
+            deferred = [];
+            syncVisible(pending);
+          }
+
+          // 每轮按当前视口结算：视口内/附近的进本轮队列，其余留到 deferred
+          const ready = [];
+          const notReady = [];
+          for (const unit of pending) (readyNow(unit) ? ready : notReady).push(unit);
+          if (notReady.length > 0) {
+            deferred.push(...notReady);
+            pending.splice(0, pending.length, ...ready);
+          }
+          if (pending.length === 0) {
+            // 这一轮全是远端。必须让出一次事件循环，否则 while 立刻回到顶部、
+            // 再次走到这里，形成不带 await 的忙循环，把主线程烧干。
+            await delay(SCROLL_DEBOUNCE_MS);
+            continue;
+          }
+
           // 每轮重排：用户滚到哪，哪里的内容就先翻
           pending.sort((a, b) => rank(a) - rank(b) || order.get(a) - order.get(b));
           const batch = pending.splice(0, UNIT_BATCH_SIZE);
@@ -592,6 +706,8 @@
         }
       } finally {
         if (observer) observer.disconnect();
+        if (canLazy) window.removeEventListener("scroll", onScroll);
+        if (scrollTimer !== null) clearTimeout(scrollTimer);
         for (const unit of units) {
           if (unit.element) delete unit.element.__tpUnit;
         }
@@ -703,7 +819,7 @@
       }
       const remaining = fresh.filter(unit => !unit.translated);
       if (remaining.length > 0) {
-        await this.translateUnits(remaining, settings.targetLanguage);
+        await this.translateUnits(remaining, settings.targetLanguage, { lazy: settings.lazyTranslate !== "off" });
       }
     },
 

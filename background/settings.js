@@ -26,6 +26,9 @@ export const DEFAULT_SETTINGS = {
   // 译文样式：none=无标记；underline=下划线；highlight=高亮底色。
   // 通过给 [data-tp-translated] 注入 CSS 实现，不改 DOM 结构。
   translatedStyle: "none",
+  // 滚动翻译：on=滚到哪翻到哪（视口附近的先翻，远端等滚动或空闲再补）；
+  // off=一次翻完整页。长文站开 on 体感快得多，短页关掉更干脆。
+  lazyTranslate: "on",
 };
 
 const VALID_ENGINES = ["google", "bing", "lingva", "mymemory", "custom"];

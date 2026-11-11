@@ -202,5 +202,11 @@
   },
   "translatedStyleHint": {
     "message": "Visually distinguish translations from source text. Applied via data attributes without changing the page DOM."
+  },
+  "lazyTranslateLabel": {
+    "message": "Translate while scrolling (recommended)"
+  },
+  "lazyTranslateDesc": {
+    "message": "Translate what you scroll to, so the first screen is ready instantly. Turn off to translate the whole page at once."
   }
 }

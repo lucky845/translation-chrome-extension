@@ -435,6 +435,63 @@ await test("路由切到没有文字的页面时，旧单元照样被回收", as
   assert.equal(state.count, 0, `旧单元应全部回收，实际剩 ${state.count}`);
 });
 
+console.log("\n[滚动翻译] 视口裁剪与开关");
+
+/**
+ * 构造一个有布局信息的页面：每段固定 stepPx 高，视口 viewportPx。
+ * jsdom 不做布局，必须自己伪造 getBoundingClientRect，否则永远采不到可见性。
+ * @param {Object} env loadContent 返回值
+ * @param {number} count 段落数
+ * @param {number} stepPx 每段高度
+ * @param {number} viewportPx 视口高度
+ */
+function fakeLayout(env, count, stepPx, viewportPx) {
+  const { window } = env;
+  const paras = Array.from(window.document.querySelectorAll("p"));
+  const tops = new Map(paras.map((p, i) => [p, i * stepPx]));
+  Object.defineProperty(window, "innerHeight", { value: viewportPx, configurable: true });
+  window.HTMLElement.prototype.getBoundingClientRect = function () {
+    const top = tops.has(this) ? tops.get(this) : 0;
+    return { top, bottom: top + stepPx, left: 0, right: 800, width: 800, height: stepPx };
+  };
+  return paras;
+}
+
+await test("滚动翻译开启时，远端段落先不送翻", async () => {
+  const paras = Array.from({ length: 60 }, (_, i) => `<p>Paragraph ${i} content.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "on" } });
+  fakeLayout(env, 60, 100, 900);
+
+  const promise = env.dispatch({ action: "translatePage" });
+  // 首轮请求应当在视口附近就收手，不该一口气把 60 段全发出去
+  await new Promise(resolve => setTimeout(resolve, 120));
+  const sentTexts = env.sent.filter(message => message.action === "translateBatch").flatMap(message => message.texts);
+  assert.ok(sentTexts.length > 0, "首屏内容应先被翻译");
+  assert.ok(sentTexts.length < 60, `远端内容不该立刻全发，实际发了 ${sentTexts.length}/60`);
+
+  // 等空闲兜底把剩下的补完，不能卡死
+  const result = await promise;
+  assert.equal(result.success, true);
+  assert.equal(result.count, 60, `停手后应补完整页，实际 ${result.count}`);
+});
+
+await test("滚动翻译关闭时，一次性翻完整页", async () => {
+  const paras = Array.from({ length: 60 }, (_, i) => `<p>Paragraph ${i} content.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "off" } });
+  fakeLayout(env, 60, 100, 900);
+  const result = await env.dispatch({ action: "translatePage" });
+  assert.equal(result.count, 60);
+});
+
+await test("滚动翻译不会卡死：远端段落最终都能翻到", async () => {
+  const paras = Array.from({ length: 200 }, (_, i) => `<p>Paragraph ${i} content.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "on" } });
+  fakeLayout(env, 200, 100, 900);
+  const result = await env.dispatch({ action: "translatePage" });
+  assert.equal(result.success, true, `不应失败: ${result.error || ""}`);
+  assert.equal(result.count, 200, `200 段应全部翻完，实际 ${result.count}`);
+});
+
 const failed = results.filter(result => !result.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);

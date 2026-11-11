@@ -202,5 +202,11 @@
   },
   "translatedStyleHint": {
     "message": "用颜色区分译文与原文，方便对照阅读。数据仍写入 data 属性，不改动页面 DOM。"
+  },
+  "lazyTranslateLabel": {
+    "message": "滚动翻译（推荐）"
+  },
+  "lazyTranslateDesc": {
+    "message": "滚到哪翻到哪，首屏秒出译文；关闭则一次翻完整页。"
   }
 }
