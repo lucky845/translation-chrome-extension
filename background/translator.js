@@ -191,7 +191,14 @@ function coolingInfo(name, now) {
  * @return {void}
  */
 function coolDown(name, reason) {
-  cooldowns.set(name, { until: Date.now() + ENGINE_COOLDOWN_MS, reason: String(reason || "") });
+  const now = Date.now();
+  const entry = cooldowns.get(name);
+  // 冷却期内再次失败**不续期**：全链路不可用时，兜底那一趟每批次都会再打一次
+  // 冷却中的引擎，如果每次都把到期时间推到 now+30s，熔断就永远不会到期——
+  // 用户侧表现就是「一直在试、一直在等、永远不恢复」。
+  // 只保留第一次失败的时间点，到期后重新给一次机会。
+  if (entry && now < entry.until) return;
+  cooldowns.set(name, { until: now + ENGINE_COOLDOWN_MS, reason: String(reason || "") });
 }
 
 /**

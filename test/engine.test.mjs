@@ -411,6 +411,36 @@ await test("熔断：引擎失败后进入冷却，下一批不再重付超时",
   resetEngineHealth();
 });
 
+await test("熔断：冷却期内反复失败不会把到期时间无限推后", async () => {
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, resetEngineHealth, getEngineHealth } = await import("../background/translator.js");
+  resetEngineHealth();
+
+  // 全链路不可用：每个批次都会走完 ready 再兜底冷却中的引擎
+  await withMockFetch(
+    url =>
+      url.includes("translate.googleapis.com")
+        ? new Response("blocked", { status: 429 })
+        : new Response("down", { status: 503 }),
+    async () => {
+      await translateTexts(["nope one"], "auto", "zh-CN", "google");
+      const firstUntil = getEngineHealth().google.until;
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await translateTexts(["nope two"], "auto", "zh-CN", "google");
+      const secondUntil = getEngineHealth().google.until;
+
+      assert.equal(secondUntil, firstUntil, `冷却期内再次失败不应续期，实际 ${firstUntil} → ${secondUntil}`);
+    }
+  );
+  resetEngineHealth();
+});
+
 await test("熔断：resetEngineHealth 后引擎重新参与（用户改配置即生效）", async () => {
   globalThis.chrome = {
     storage: {
