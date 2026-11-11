@@ -433,6 +433,152 @@ test("英文页面判断为目标语言不成立", () => {
   assert.equal(api.isPageAlreadyTarget("zh-CN"), false);
 });
 
+console.log("\n[6] 代码审查回归（P0/P1 修复锁死）");
+test("P0-1 容器有直属文本+块级子元素时建浅层单元，内层译文不被抹掉", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="outer">Intro text.<div id="inner">Inner block.</div></div></body></html>`
+  );
+  const units = api.collectUnits(win.document.getElementById("outer"));
+  assert.equal(units.length, 2, `应有两个单元，实际 ${units.length}`);
+  assert.equal(units[0].shallow, true, "外层必须是 shallow");
+  units[0].applyWholeText("引言文字。");
+  units[1].applyWholeText("内部块。");
+  const html = win.document.getElementById("outer").innerHTML;
+  assert.ok(html.includes("引言文字"), `外层译文丢失: ${html}`);
+  assert.ok(html.includes("内部块"), `内层译文被外层 replaceChildren 抹掉: ${html}`);
+});
+
+test("P0-2 整段降级不把译文塞进 <a>，链接文字不被清空后还原", () => {
+  const { api, win } = load(`<html lang="en"><body><p id="p">Read the <a href="/d">docs</a> here.</p></body></html>`);
+  const original = win.document.body.innerHTML;
+  const unit = api.collectUnits(win.document.getElementById("p"))[0];
+  assert.equal(unit.applyWholeText("阅读文档"), true);
+  const link = win.document.querySelector("a");
+  assert.equal(link.textContent.trim(), "", "链接内不应残留旧文字");
+  assert.ok(!link.textContent.includes("阅读文档"), "译文不能钻进链接内部");
+  unit.restore();
+  assert.equal(win.document.body.innerHTML, original, "还原后链接文字必须回来");
+});
+
+test("P0-4 原文尖括号转义，往返不丢内容", () => {
+  const { api, win } = load(`<html lang="en"><body><p id="p">Use <code>Array&lt;T&gt;</code> tags.</p></body></html>`);
+  const unit = api.collectUnits(win.document.getElementById("p"))[0];
+  assert.ok(unit.text.includes("&lt;T&gt;"), `尖括号必须转义，实际: ${unit.text}`);
+  assert.equal(unit.apply(unit.text), true);
+  assert.equal(win.document.getElementById("p").innerHTML, `Use <code>Array&lt;T&gt;</code> tags.`, "往返必须无损");
+});
+
+test("P0-5 restore 不回滚页面在翻译期间的新内容", () => {
+  const { api, win } = load(`<html lang="en"><body><p id="p">Original v1.</p></body></html>`);
+  const unit = api.collectUnits(win.document.getElementById("p"))[0];
+  unit.apply("原始版本一。");
+  // 模拟框架更新
+  win.document.getElementById("p").textContent = "Original v2 from framework.";
+  unit.restore();
+  assert.equal(win.document.getElementById("p").innerHTML, "Original v2 from framework.", "不能回滚成 v1");
+});
+
+test("P1-1 display:block 的 strong 是独立块，不与正文合并", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><p><strong style="display:block">A big claim</strong> and more.</p></body></html>`
+  );
+  const units = api.collectUnits(win.document.body);
+  const texts = units.map(u => u.text).join("|");
+  assert.ok(!texts.includes("<0>A big claim</0>"), `块级 strong 不该变占位符，实际: ${texts}`);
+  assert.ok(
+    units.some(u => u.text === "A big claim"),
+    `应有独立单元，实际: ${texts}`
+  );
+});
+
+test("P1-6 ruby 注音不进正文", () => {
+  const { api, win } = load(
+    `<html lang="ja"><body><p id="p">漢字<ruby>東京<rt>Tōkyō</rt></ruby>です</p></body></html>`
+  );
+  const unit = api.collectUnits(win.document.getElementById("p"))[0];
+  assert.ok(!unit.text.includes("Tōkyō"), `<rt> 注音必须丢弃，实际: ${unit.text}`);
+  assert.ok(unit.text.includes("東京"), "正文保留");
+});
+
+console.log("\n[7] 属性文本翻译");
+test("采集 title/alt/aria-label/placeholder 四类属性", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="d">` +
+      `<a href="/x" title="Open settings panel">link here</a>` +
+      `<button aria-label="Close dialog">x</button>` +
+      `<input placeholder="Search docs">` +
+      `<img alt="Settings gear" src="g.png">` +
+      `</div></body></html>`
+  );
+  const entries = api.collectAttributeTexts(win.document.getElementById("d"), "zh-CN");
+  const got = entries.map(e => e.attr).sort();
+  assert.deepEqual(got, ["alt", "aria-label", "placeholder", "title"], `实际: ${got}`);
+});
+
+test("属性翻译：应用后还原逐字节一致", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="d">` +
+      `<a href="/x" title="Open settings panel">link here</a>` +
+      `<img alt="Settings gear" src="g.png">` +
+      `</div></body></html>`
+  );
+  const original = win.document.getElementById("d").innerHTML;
+  const entries = api.collectAttributeTexts(win.document.getElementById("d"), "zh-CN");
+  const saved = [];
+  const map = new Map(entries.map(e => [e.text, "译:" + e.text]));
+  assert.equal(api.applyAttributeTexts(entries, map, saved), 2);
+
+  const link = win.document.querySelector("a");
+  assert.equal(link.getAttribute("title"), "译:Open settings panel", "title 未更新");
+  assert.equal(win.document.querySelector("img").getAttribute("alt"), "译:Settings gear", "alt 未更新");
+
+  api.restoreAttributeTexts(saved);
+  assert.equal(win.document.getElementById("d").innerHTML, original, "还原必须逐字节一致");
+});
+
+test("属性已是目标语言时不采集（中文 title 不再翻）", () => {
+  const { api, win } = load(`<html lang="zh-CN"><body><a href="/x" title="打开设置面板">设置</a></body></html>`);
+  const entries = api.collectAttributeTexts(win.document.body, "zh-CN");
+  assert.equal(entries.length, 0, `中文属性不该被采集，实际: ${entries.map(e => e.text)}`);
+});
+
+test("属性扫描不被 SKIP_TAGS 拦住（placeholder/aria-label 要能翻）", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><input placeholder="Search docs"><button aria-label="Close dialog">x</button></body></html>`
+  );
+  const entries = api.collectAttributeTexts(win.document.body, "zh-CN");
+  assert.equal(entries.length, 2, `input/button 属性必须能采到，实际: ${entries.length}`);
+});
+
+console.log("\n[8] 语言判定（P2-5 日语误判修复）");
+test("日语不判为中文：假名直接触发需翻", () => {
+  const { api } = load(`<html lang="ja"><body></body></html>`);
+  assert.equal(api.isAlreadyTarget("東京で会いましょう", "zh-CN"), false, "日语必须送翻");
+  assert.equal(api.isAlreadyTarget("これはテストです", "zh-CN"), false, "纯假名必须送翻");
+});
+
+test("韩语不判为中文", () => {
+  const { api } = load(`<html><body></body></html>`);
+  assert.equal(api.isAlreadyTarget("한국어 문장입니다", "zh-CN"), false);
+});
+
+test("中文技术段落（夹英文术语）仍判为中文", () => {
+  const { api } = load(`<html><body></body></html>`);
+  const text = "这是一个中文段落，里面有 Git 和 GitHub 这样的英文术语，整体仍然是中文表达。";
+  assert.equal(api.isAlreadyTarget(text, "zh-CN"), true);
+});
+
+test("中英混排短标题送翻", () => {
+  const { api } = load(`<html><body></body></html>`);
+  assert.equal(api.isAlreadyTarget("功能特性 Hello World", "zh-CN"), false);
+  assert.equal(api.isAlreadyTarget("Getting started with the API", "zh-CN"), false);
+});
+
+test("非中文目标语言不做字面判定", () => {
+  const { api } = load(`<html><body></body></html>`);
+  assert.equal(api.isAlreadyTarget("这是一个中文段落", "en"), false, "翻英文时中文内容必须送翻");
+});
+
 const failed = results.filter(r => !r.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);

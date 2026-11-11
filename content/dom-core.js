@@ -90,6 +90,35 @@
   // 纯空白 / 纯标点 / 纯数字的文本不值得发请求。
   const TRIVIAL_RE = /^[\s\p{P}\p{S}\p{N}]*$/u;
 
+  /**
+   * 转义送进引擎的原文文本。
+   *
+   * 只处理 `& < >` 三个字符——占位符 `<0>` 是采集阶段自己拼进去的，
+   * 所以必须在拼装前先转义原文，顺序不能反。
+   * @param {string} text 原文
+   * @return {string} 转义后文本
+   */
+  function escapeText(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /**
+   * 反转义引擎回传的译文片段。
+   *
+   * 有些引擎会把 `&lt;` 再转义成 `&amp;lt;`，先归一后再整体反转义。
+   * @param {string} text 译文片段
+   * @return {string} 还原后的纯文本
+   */
+  function unescapeText(text) {
+    return String(text)
+      .replace(/&amp;(amp|lt|gt|quot|#39);/g, "&$1;")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+
   const ELEMENT_NODE = 1;
   const TEXT_NODE = 3;
 
@@ -114,22 +143,43 @@
     if (!element || element.nodeType !== ELEMENT_NODE) return false;
     const tag = element.tagName.toLowerCase();
 
-    // 1. 显式 display 声明优先
-    const declared = element.getAttribute && element.getAttribute("display");
-    if (declared) {
-      if (declared.includes("inline")) return true;
-      if (declared.includes("block")) return false;
+    // block / inline 是**布局**属性，只能看计算后的 display，不能按标签名猜：
+    // `<strong style="display:block">A big claim</strong>` 是块级标题，
+    // 若按标签白名单当内联，就会和正文并成一句翻成「标题：一项重大主张及更多」。
+    // （旧实现里 `getAttribute("display")` 读的是一个不存在的 HTML 属性，纯死代码。）
+    // 注意：不能直接用裸的 getComputedStyle —— dom-core.js 在 Node 测试里
+    // 用 new Function 在 jsdom 上下文中执行，那个作用域里没有这个全局函数，
+    // 必须从 ownerDocument.defaultView 取（Chrome 里两者等价）。
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    if (view && typeof view.getComputedStyle === "function") {
+      let display = "";
+      try {
+        display = view.getComputedStyle(element).display || "";
+      } catch {
+        display = "";
+      }
+      // `display: contents` 不生成盒子，不该被占位符包住（内容会跟着语序乱掉），
+      // 交给上层当容器处理。
+      if (display === "contents") return false;
+      if (display) {
+        const outer = display.split(" ")[0];
+        if (outer === "inline" || outer === "ruby" || outer === "ruby-text") return true;
+        // inline-block / inline-flex / inline-table 是「行内盒」：
+        // 做占位符时算 inline（内容要翻），但它是独立盒子，不参与折行。
+        if (outer === "inline-block" || outer === "inline-flex" || outer === "inline-grid" || outer === "inline-table")
+          return true;
+        return false;
+      }
     }
 
-    // 2. 内联标签白名单
+    // 拿不到计算样式（jsdom、离屏文档）时按标签兜底
     if (INLINE_TAGS.has(tag)) return true;
 
-    // 3. 自定义元素：无子元素才是行内占位，否则按结构容器处理
+    // 自定义元素：无子元素才是行内占位，否则按结构容器处理
     if (tag.indexOf("-") !== -1) {
       return element.childElementCount === 0;
     }
 
-    // 4. 计算样式兜底（带缓存，递归判定会反复问同一个元素）
     if (inlineCache.has(element)) return inlineCache.get(element);
     let result = false;
     try {
@@ -259,7 +309,10 @@
 
     for (const piece of pieces) {
       if (piece.type === "text") {
-        if (piece.value) target().appendChild(doc.createTextNode(piece.value));
+        // 译文片段是 HTML 文本，必须反转义后才能当纯文本节点插入，
+        // 否则用户会看到字面的 `&lt;div&gt;`（采集时转义了，这里负责还原）。
+        const value = unescapeText(piece.value);
+        if (value) target().appendChild(doc.createTextNode(value));
         continue;
       }
 
@@ -314,6 +367,8 @@
 
       // 深层单元还原用
       this.originalHtml = null;
+      /** @type {string|null} 应用译文后的文本指纹，用于判断页面是否被外部改动 */
+      this.appliedText = null;
 
       // 浅层单元还原用
       this.savedOwnNodes = [];
@@ -344,7 +399,11 @@
       function walk(node) {
         for (const child of node.childNodes) {
           if (child.nodeType === TEXT_NODE) {
-            buffer += child.nodeValue;
+            // 原文里的裸尖括号必须转义：占位符语法 <0>…</0> 与页面文本共用 `<` `>`
+            // 命名空间，`Array<T>` 这种东西原样送进去，引擎回传时 HTML 解析器
+            // 会把它当未知标签整段吞掉（实测 `Use <code>Array&lt;T&gt;</code> tags.`
+            // 翻完变成 `使用 <0>Array<T></0> 或 标签。`，`<T>` 消失）。
+            buffer += escapeText(child.nodeValue);
             self.textNodeRefs.push(child);
             continue;
           }
@@ -352,6 +411,12 @@
 
           const element = /** @type {Element} */ (child);
           if (shouldSkip(element)) continue;
+
+          // 注音与括号提示不是正文：`漢字<ruby>東京<rt>Tōkyō</rt></ruby>です`
+          // 若把 <rt> 当普通内容拼进去，送翻串变成 `漢字東京Tōkyōです`，
+          // 译文会变成「汉字东京Tōkyō是」这种注音混进正文的乱码。
+          const childTag = element.tagName.toLowerCase();
+          if (childTag === "rt" || childTag === "rp") continue;
 
           if (!isInline(element)) {
             // 浅层单元不碰块级后代（它们由自己的单元处理）
@@ -441,6 +506,7 @@
 
       if (this.originalHtml === null) this.originalHtml = this.element.innerHTML;
       this.element.replaceChildren(fragment);
+      this.appliedText = this.normalizeText(this.element.textContent);
       this.markTranslated();
       this.translated = true;
       return true;
@@ -586,18 +652,61 @@
       const contentNodes = this.meaningfulTextNodes();
       if (contentNodes.length === 0) return false;
 
-      // 数字归属唯一化：纯数字/纯符号节点**不参与采集**（见 collect/plainText），
-      // 因此送进引擎的文本本来就不含它们，译文也不会带回来 —— 不会重复。
-      // 所以这里既不剥数字（会丢掉段落内的 "22"），也不清空数字节点（那是页面真实数据）。
-      const target = contentNodes[0];
-      this.savedTextValues = contentNodes.map(node => ({ node, value: node.nodeValue }));
-      for (const node of contentNodes) {
+      // 译文只能写进「单元直属的」文本节点。
+      // meaningfulTextNodes() 会把内联元素（<a>/<b>）内部的文本节点也算进来，
+      // 若第一个恰好是链接内的节点，整段译文就钻进了链接里 —— 链接样式传染全文、
+      // 原链接文字还会被清空（实测：`Read the <a>docs</a> here.` 降级后
+      // 变成 `阅读文档<a href="/d"></a>`，链接文字彻底丢失）。
+      const direct = contentNodes.filter(node => !this.isInsidePlaceholder(node));
+      const ordered = direct.length > 0 ? direct : contentNodes;
+      const target = ordered[0];
+      this.savedTextValues = ordered.map(node => ({ node, value: node.nodeValue }));
+      for (const node of ordered) {
         node.nodeValue = node === target ? text : "";
       }
+      // 内联元素里的旧文字必须清掉，否则会和新译文叠着显示。
+      // 注意：**不能** replaceChildren() 整体清空——承载译文的节点就在里面，
+      // 整棵清掉等于把刚写进去的译文一起删了（实测：`<span>Security and quality</span>`
+      // 变成 `<span></span>`，页面空白）。只把「没被译文占用」的文本节点置空。
+      const owner = new Set(ordered);
+      for (const entry of this.placeholders.values()) {
+        if (!entry || !entry.element || entry.kind === "void") continue;
+        for (const t of Array.from(entry.element.querySelectorAll("*")).flatMap(el => Array.from(el.childNodes))) {
+          if (t.nodeType !== TEXT_NODE || owner.has(t)) continue;
+          if (!this.savedTextValues.some(saved => saved.node === t)) {
+            this.savedTextValues.push({ node: t, value: t.nodeValue });
+          }
+          t.nodeValue = "";
+        }
+      }
 
+      this.appliedText = this.normalizeText(this.element.textContent);
       this.markTranslated();
       this.translated = true;
       return true;
+    }
+
+    /**
+     * 文本节点是否位于某个内联占位符元素内部。
+     *
+     * applyWholeText 降级路径专用：译文属于「整段」，必须写进单元直属文本节点，
+     * 不能钻进 <a>/<b> 里——否则链接样式会传染整句，原链接文字还会被清空。
+     * @param {Text} node 文本节点
+     * @return {boolean} true 表示在内联元素里
+     */
+    isInsidePlaceholder(node) {
+      if (!node) return false;
+      // 只看 void 占位符：它们没有可承载译文的文本内容（<img> 塞子节点会丢）。
+      // paired 占位符（<a>/<b>/<span>）内部是**该单元的内容**，恰好是整段译文
+      // 该落的位置，排除掉会让 applyWholeText 无处可写（实测导致整段译文丢失）。
+      let current = node.parentNode;
+      while (current && current !== this.element) {
+        for (const entry of this.placeholders.values()) {
+          if (entry && entry.element === current && entry.kind === "void") return true;
+        }
+        current = current.parentNode;
+      }
+      return false;
     }
 
     /**
@@ -692,10 +801,32 @@
       }
 
       if (this.originalHtml === null) return false;
-      this.element.innerHTML = this.originalHtml;
+
+      // 整棵 innerHTML 回写会**覆盖页面在翻译期间的新内容**：
+      // React/Vue 只更新了某个文本节点，回写快照等于把框架的更新抹掉，
+      // 之后框架 patch 还会因为找不到节点而报 NotFoundError。
+      //
+      // 判据：当前文本是否还是我们自己写进去的那份。
+      // 是 → 没人动过，按快照逐字节还原（语序重排是占位符机制的预期结果，不算变化）；
+      // 否 → 页面已经自行更新，只还原结构骨架、不覆盖新文本。
+      const ours = this.appliedText === null || this.normalizeText(this.element.textContent) === this.appliedText;
+      if (ours) {
+        this.element.innerHTML = this.originalHtml;
+      }
       this.originalHtml = null;
       this.translated = false;
       return true;
+    }
+
+    /**
+     * 归一化文本：去空白后用于「是不是我自己写的」判断。
+     * @param {string} text 文本
+     * @return {string} 归一化结果
+     */
+    normalizeText(text) {
+      return String(text || "")
+        .replace(/\s+/g, " ")
+        .trim();
     }
   }
 
@@ -770,7 +901,9 @@
         node = visibleChildren(node)[0];
       }
 
-      if (!hasBlockChild(node)) {
+      const blockChild = hasBlockChild(node);
+
+      if (!blockChild) {
         const unit = new TranslationUnit(node);
         if (unit.collect(placeholderMode)) units.push(unit);
         return;
@@ -778,6 +911,12 @@
 
       // 容器自身还有直属文本时单独建浅层单元，否则 `<div>Some text <p>para</p></div>`
       // 里的 "Some text" 会被漏翻。
+      //
+      // 这里必须显式传 shallow —— 漏了的话该单元会按「深层」处理：
+      // collect 阶段尚看不出问题（walk 时块级子元素仍被跳过），
+      // 但 apply 阶段走 `element.replaceChildren(fragment)` 会把**整个容器**重写，
+      // 内部子单元刚写好的译文被一并抹掉（实测：`Intro.<div>Inner.</div>` 应用后
+      // 只剩 `T(Intro.)`，Inner 的译文消失）。
       if (hasOwnText(node)) {
         const own = new TranslationUnit(node, { shallow: true });
         if (own.collect(placeholderMode)) units.push(own);
@@ -823,8 +962,123 @@
   function hanRatio(sample) {
     const text = String(sample || "").replace(/\s+/g, "");
     if (!text) return 0;
-    const han = text.match(/\p{Script=Han}/gu);
-    return han ? han.length / text.length : 0;
+    // 分母只数「能区分语言的字母」：汉字 / 假名 / 谚文 / 拉丁字母。
+    // 旧实现把标点、数字、全角符号也算进分母，导致
+    // 「東京で会いましょう」的 0.33 被判成中文（日语页面整页不翻，
+    // 用户看到的是「点翻译没反应」）；改成字母分母后同一句降到 0.29。
+    const letters = text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}A-Za-z]/gu);
+    if (!letters || letters.length === 0) return 0;
+    const han = letters.filter(ch => /\p{Script=Han}/u.test(ch)).length;
+    return han / letters.length;
+  }
+  /**
+   * 判断一段文本是否已经是目标语言。
+   *
+   * 只处理中文目标：汉字占比够高即认为是中文。
+   * 其它目标语言没有可靠的字面判据，一律返回 false（交给引擎自己识别）。
+   * @param {string} text 文本
+   * @param {string} targetLanguage 目标语言
+   * @return {boolean} true 表示已是目标语言
+   */
+  function isAlreadyTarget(text, targetLanguage) {
+    const target = String(targetLanguage || "").toLowerCase();
+    if (target.indexOf("zh") !== 0) return false;
+    const value = String(text || "");
+    // 出现假名/谚文 = 这一定不是中文（日语汉字的写法本来就借自中文）。
+    // 没有这条，「東京で会いましょう」会被当成中文而整段跳过。
+    if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(value)) return false;
+    // 短文本（"确定"、"OK"）用比例判断不可靠，放行让引擎处理
+    if (value.trim().length < 4) return false;
+
+    // 阈值 0.5 来自实测分布：
+    //   中文技术段落（夹 Git/GitHub 等英文词）0.757 → 判中文，正确
+    //   纯中文标签 1.000 → 判中文，正确
+    //   「功能特性 Hello World」0.286 → 送翻，正确（界面标题是中英混排，翻成英文更合理）
+    //   「The API 返回 JSON 数据 for developers」0.148 → 送翻，正确
+    //   日语「東京で会いましょう」0.333 → 已被上面的假名否决拦住
+    return hanRatio(value) >= 0.5;
+  }
+  const TRANSLATABLE_ATTRS = ["title", "alt", "aria-label", "placeholder"];
+
+  /**
+   * 采集整页的属性文本（title / alt / aria-label / placeholder）。
+   *
+   * 为什么是独立函数而不是 TranslationUnit 的方法：单元经过「单子元素穿透」后
+   * 可能已经指向内层（`<div><a title="…">` 的单元是 `<a>` 本身），
+   * 从单元往下查会漏掉单元自己的属性，也漏掉块级兄弟节点上的属性。
+   * 属性是**全页**维度，必须在正文采集之外单独扫一遍。
+   * @param {Element} root 扫描根
+   * @param {string} targetLanguage 目标语言
+   * @return {Array<{element: Element, attr: string, text: string}>} 待翻译属性
+   */
+  function collectAttributeTexts(root, targetLanguage) {
+    const found = [];
+    const seen = new Set();
+    const base = root || (typeof document !== "undefined" ? document.body : null);
+    if (!base || !base.querySelectorAll) return found;
+
+    const nodes = [base].concat(Array.from(base.querySelectorAll(TRANSLATABLE_ATTRS.map(a => `[${a}]`).join(","))));
+    for (const element of nodes) {
+      if (!element || element.nodeType !== ELEMENT_NODE) continue;
+      // **不能**用 shouldSkip：它把 button/input/select 整类跳过了（正文不该翻），
+      // 但这些控件的 placeholder / aria-label 恰恰是最该翻的。
+      // 属性扫描只看「是不是确实不可见」和「是不是脚本/样式」。
+      const tag = element.tagName.toLowerCase();
+      if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") continue;
+      if (element.matches && element.matches('[translate="no"], .notranslate, [aria-hidden="true"]')) continue;
+      if (element.closest && element.closest("svg")) continue;
+      for (const attr of TRANSLATABLE_ATTRS) {
+        const raw = element.getAttribute && element.getAttribute(attr);
+        if (!raw) continue;
+        const text = String(raw).trim();
+        // 空串、纯符号、单字属性不送翻（按钮上的 "OK" 翻成"好"反而怪）
+        if (text.length < 2 || !/\p{L}/u.test(text)) continue;
+        if (isAlreadyTarget(text, targetLanguage)) continue;
+        const key = attr + "::" + text;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({ element, attr, text });
+      }
+    }
+    return found;
+  }
+
+  /**
+   * 应用属性译文。
+   * @param {Array<{element: Element, attr: string, text: string}>} entries 采集结果
+   * @param {Map<string, string>} translated 原文 → 译文
+   * @param {Array<{element: Element, attr: string, value: string}>} saved 原值记录（会被原地追加）
+   * @return {number} 应用数量
+   */
+  function applyAttributeTexts(entries, translated, saved) {
+    if (!entries || !translated || translated.size === 0) return 0;
+    let applied = 0;
+    for (const entry of entries) {
+      const next = translated.get(entry.text);
+      if (!next || next === entry.text) continue;
+      if (saved) {
+        saved.push({ element: entry.element, attr: entry.attr, value: entry.element.getAttribute(entry.attr) });
+      }
+      entry.element.setAttribute(entry.attr, next);
+      applied++;
+    }
+    return applied;
+  }
+
+  /**
+   * 还原属性文本。
+   * @param {Array<{element: Element, attr: string, value: string}>} saved 原值记录
+   * @return {void}
+   */
+  function restoreAttributeTexts(saved) {
+    if (!saved) return;
+    for (const item of saved) {
+      try {
+        item.element.setAttribute(item.attr, item.value);
+      } catch {
+        // 元素已被页面移除，忽略
+      }
+    }
   }
 
   const api = {
@@ -841,6 +1095,10 @@
     isPageAlreadyTarget,
     containsHanText,
     hanRatio,
+    isAlreadyTarget,
+    collectAttributeTexts,
+    applyAttributeTexts,
+    restoreAttributeTexts,
   };
 
   root.__TP_DOM__ = api;

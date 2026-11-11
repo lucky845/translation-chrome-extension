@@ -12,7 +12,7 @@
  * 运行：node test/e2e.mjs
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocket } from "undici";
 import { tmpdir, homedir } from "node:os";
@@ -35,8 +35,22 @@ const PAGE_HTML = `<!DOCTYPE html>
   <p id="para2">The lighthouse keeper climbed <img src="/x.png" alt="tower"> every single morning.</p>
   <div id="mixed">Intro text here<p id="nested">Nested paragraph text.</p></div>
   <pre id="code">const x = 1; // do not translate</pre>
+  <p id="blockStrong"><strong id="blockTitle" style="display:block">A big claim</strong> and more.</p>
+  <nav id="flexNav"><b style="display:flex">Home page</b><b style="display:flex">About page</b></nav>
+  <p id="bracket">Use <code>Array&lt;T&gt;</code> tags.</p>
+  <p id="ruby">漢字<ruby>東京<rt>Tōkyō</rt></ruby>です</p>
+  <a id="titled" href="/x" title="Open settings panel">link here</a>
+  <input id="search" placeholder="Search documents">
+  <p id="dynamic">Original v1.</p>
 </body>
 </html>`;
+
+/**
+ * 页面 body 的原始 HTML 快照（翻译前），用于「恢复后逐字节还原」断言。
+ * 直接从 PAGE_HTML 里切出来，避免两处维护同一份 HTML 导致漂移。
+ * @type {string}
+ */
+const PAGE_BODY_HTML = PAGE_HTML.slice(PAGE_HTML.indexOf("<body>") + "<body>".length, PAGE_HTML.indexOf("</body>"));
 
 /**
  * 等待一段时间。
@@ -283,11 +297,27 @@ async function findFixtureTab(swCdp) {
 const userDataDir = mkdtempSync(join(tmpdir(), "tp-e2e-"));
 // Chrome 137+ 正式版（branded）在 headless 下忽略 --load-extension，
 // 必须用 Chrome for Testing / Chromium。按优先级探测本机可用二进制。
+const PUPPETEER_ROOT = join(homedir(), ".cache/puppeteer/chrome");
+// 动态发现已下载的 Chrome for Testing 版本（版本号会变，硬编码会在升级后失效）
+const CFT_RELATIVE = "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+/** [2.5] 动态内容测试写入的文本；恢复断言要以它为基准，不能要求回滚。 */
+const DYNAMIC_UPDATED_TEXT = "Original text updated by framework.";
+
+/** 收集所有已下载的 Chrome for Testing 可执行文件路径，新版本优先。 */
+function listChromeForTesting() {
+  if (!existsSync(PUPPETEER_ROOT)) return [];
+  return readdirSync(PUPPETEER_ROOT)
+    .filter(name => name.startsWith("mac_arm-"))
+    .sort()
+    .reverse()
+    .map(name => join(PUPPETEER_ROOT, name, CFT_RELATIVE))
+    .filter(p => existsSync(p));
+}
+
+const cftCandidates = listChromeForTesting();
+
 const chromeCandidates = [
-  join(
-    homedir(),
-    ".cache/puppeteer/chrome/mac_arm-131.0.6778.204/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
-  ),
+  ...cftCandidates,
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
@@ -440,15 +470,147 @@ try {
     if (!/[\u4e00-\u9fff]/.test(probe.nestedText)) throw new Error(`子段落未翻译: ${probe.nestedText}`);
   });
 
+  console.log("\n[2.5] 本轮修复的真实浏览器核验（jsdom 覆盖不了布局）");
+  await test("P1-1 display:block 的 strong 在真实布局下判为块级", async () => {
+    const probe = await evaluate(
+      page,
+      `(() => {
+        const strong = document.getElementById("blockTitle");
+        const dom = window.__TP_DOM__;
+        return { display: getComputedStyle(strong).display, isInline: dom.isInline(strong) };
+      })()`
+    );
+    if (probe.display !== "block") throw new Error(`display 异常: ${probe.display}`);
+    if (probe.isInline) throw new Error("display:block 的 strong 被判成内联——P1-1 未生效");
+  });
+
+  await test("P1-1 display:flex 的 b 在真实布局下判为块级", async () => {
+    const probe = await evaluate(
+      page,
+      `(() => {
+        const b = document.querySelector("#flexNav b");
+        return { display: getComputedStyle(b).display, isInline: window.__TP_DOM__.isInline(b) };
+      })()`
+    );
+    if (probe.display !== "flex") throw new Error(`display 异常: ${probe.display}`);
+    if (probe.isInline) throw new Error("display:flex 的 b 被判成内联");
+  });
+
+  await test("普通内联 a 在真实布局下仍是内联", async () => {
+    const isInline = await evaluate(page, `window.__TP_DOM__.isInline(document.getElementById("doclink"))`);
+    if (!isInline) throw new Error("<a> 被误判为块级，会把整段切成两段");
+  });
+
+  await test("P0-4 尖括号在真实页面往返不丢", async () => {
+    const probe = await evaluate(
+      page,
+      `(() => {
+        const text = window.__TP_DOM__.collectUnits(document.getElementById("bracket"))[0].text;
+        return { text };
+      })()`
+    );
+    if (!probe.text.includes("&lt;T&gt;")) throw new Error(`尖括号未转义: ${probe.text}`);
+  });
+
+  await test("P1-6 ruby 注音在真实页面不进正文", async () => {
+    const text = await evaluate(page, `window.__TP_DOM__.collectUnits(document.getElementById("ruby"))[0].text`);
+    if (text.includes("Tōkyō")) throw new Error(`rt 注音未过滤: ${text}`);
+  });
+
+  await test("属性文本在真实页面能采集到 title/placeholder", async () => {
+    const probe = await evaluate(
+      page,
+      `(() => {
+        const entries = window.__TP_DOM__.collectAttributeTexts(document.body, "zh-CN");
+        return entries.map(e => e.attr + "=" + e.text);
+      })()`
+    );
+    const joined = probe.join("|");
+    if (!joined.includes("title=Open settings panel")) throw new Error(`title 未采集: ${joined}`);
+    if (!joined.includes("placeholder=Search documents")) throw new Error(`placeholder 未采集: ${joined}`);
+  });
+
+  await test("P2-7 MutationObserver 捕获文本节点变化（React 只改 textContent）", async () => {
+    // 直接改文本节点值：不产生 childList 记录，只监听 childList 的旧实现会漏掉
+    await evaluate(
+      page,
+      `(() => {
+        const p = document.getElementById("dynamic");
+        p.firstChild.nodeValue = ${JSON.stringify(DYNAMIC_UPDATED_TEXT)};
+        return true;
+      })()`
+    );
+    await sleep(1200); // 等节流窗口 + 采集
+    const captured = await evaluate(
+      page,
+      `(() => {
+        const units = window.__TP_DOM__.collectUnits(document.getElementById("dynamic"));
+        return units.length > 0 ? units[0].text : "";
+      })()`
+    );
+    if (!captured.includes("updated by framework")) {
+      throw new Error(`文本变化未被采集: ${captured}`);
+    }
+    // 打印实际状态，供恢复断言定位差异
+    const live = await evaluate(page, `document.getElementById("dynamic").outerHTML`);
+    console.log("  动态元素实际状态:", live);
+  });
+
   console.log("\n[3] 恢复");
   await test("恢复原文后 DOM 逐字节还原", async () => {
     if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
-    const before = await evaluate(page, `document.body.innerHTML`);
+    // 译文态必须先取一份，用于确认「恢复前确实被翻译过」（否则断言毫无意义）。
+    const translatedHtml = await evaluate(page, `document.body.innerHTML`);
+    if (!/[\u4e00-\u9fff]/.test(translatedHtml)) {
+      throw new Error("恢复前页面里没有中文，前面的翻译断言不可信");
+    }
+
     const tabId = await findFixtureTab(swCdp);
     const restored = await tabsMessage(swCdp, tabId, { action: "restorePage" }, 15000);
-    const after = await evaluate(page, `document.body.innerHTML`);
     if (!restored || restored.count < 3) throw new Error(`恢复单元数过少: ${restored && restored.count}`);
-    if (before !== after) throw new Error("恢复后 innerHTML 与原始不一致");
+
+    const after = await evaluate(page, `document.body.innerHTML`);
+    // 比对基准要排除 #dynamic：它在 [2.5] 里被脚本主动改写（模拟框架更新），
+    // 恢复后**必须保留**框架写入的新值而不是回滚成 Original v1.（那是 P0-5 的修复）。
+    // 所以基准 = 页面原始 HTML，但把 #dynamic 的内容替换成动态测试写入的那句。
+    const squash = html => html.replace(/>\s+</g, "><").replace(/^\s+|\s+$/g, "");
+    const expected = squash(PAGE_BODY_HTML).replace(
+      /<p id="dynamic">[^<]*<\/p>/,
+      `<p id="dynamic">${DYNAMIC_UPDATED_TEXT}</p>`
+    );
+    if (squash(after) !== expected) {
+      const exp = expected;
+      const act = squash(after);
+      let at = 0;
+      while (at < exp.length && at < act.length && exp[at] === act[at]) at++;
+      console.log(`  首个差异位置 ${at}/${exp.length} vs ${act.length}`);
+      console.log("  期望上下文:", exp.slice(Math.max(0, at - 120), at + 200));
+      console.log("  实际上下文:", act.slice(Math.max(0, at - 120), at + 200));
+      throw new Error("恢复后 innerHTML 与原始不一致");
+    }
+    if (!/The Old Lighthouse/.test(after)) throw new Error("标题未还原为英文原文");
+    // 「残留中文」只能按元素比对：fixture 里 #ruby 本来就是日文（漢字/東京），
+    // 全页正则会把原文误报成翻译残留。逐个检查「原文里没有汉字的元素」恢复后也不该有。
+    const leftovers = await evaluate(
+      page,
+      `(() => {
+        const hasHan = s => /[\\u4e00-\\u9fff]/.test(s);
+        const original = ${JSON.stringify(PAGE_BODY_HTML)};
+        const out = [];
+        for (const el of document.querySelectorAll("[id]")) {
+          const now = el.textContent;
+          if (!hasHan(now)) continue;
+          const idx = original.indexOf('id="' + el.id + '"');
+          if (idx < 0) continue;
+          if (!hasHan(original.slice(idx, idx + 300))) out.push(el.id + ": " + now.slice(0, 40));
+        }
+        return out;
+      })()`
+    );
+    if (leftovers.length > 0) {
+      console.log("  残留中文元素:", leftovers.join(" | "));
+      throw new Error("恢复后仍残留中文");
+    }
   });
 
   page.close();

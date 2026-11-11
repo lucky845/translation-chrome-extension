@@ -58,6 +58,10 @@
     mutationTimer: null,
     /** @type {boolean} */
     observerSuppressed: false,
+    /** @type {Array<{element: Element, attr: string, text: string}>} 待翻译的属性文本 */
+    attributeEntries: [],
+    /** @type {Array<{element: Element, attr: string, value: string}>} 已改写属性的原值 */
+    savedAttrText: [],
     /** @type {boolean} 正在还原：用于让翻译循环立刻停下 */
     restoring: false,
     /** @type {?MutationObserver} */
@@ -142,6 +146,10 @@
         // 按单元剔除已是目标语言的段落。
         // 整页判断不可靠：GitHub 这类页面 lang="en"，但 README 正文是中文，
         // 一刀切会把「中文翻成中文」，产出「功能特性 → 好吃」这种荒谬结果。
+        // 属性文本（title / alt / aria-label / placeholder）单独走一遍：
+        // 它们不在正文里，单元采集根本碰不到。全页维度，和单元过滤互不影响。
+        this.attributeEntries = DOM.collectAttributeTexts(document.body, target);
+
         const beforeFilter = this.units.length;
         this.units = this.filterAlreadyTarget(this.units, target);
         if (this.units.length === 0) {
@@ -176,6 +184,16 @@
         if (remaining.length > 0) {
           applied += await this.translateUnits(remaining, target);
         }
+
+        // 属性文本：正文翻完再补一轮，复用同一批引擎与缓存。
+        // 失败不影整体结果——tooltip 翻不了不该让整页判定为失败。
+        if (this.attributeEntries.length > 0) {
+          try {
+            await this.translateAttributes(from, target);
+          } catch {
+            // 属性翻译失败静默降级，正文译文保留
+          }
+        }
         this.hideIndicator();
 
         if (applied === 0) {
@@ -195,6 +213,50 @@
         this.lastError = error.message || String(error);
         return { success: false, count: 0, error: this.lastError };
       }
+    },
+
+    /**
+     * 翻译属性文本（title / alt / aria-label / placeholder）。
+     *
+     * 属性与正文共用同一批文本管道：去重后一次性送翻，回来后 setAttribute。
+     * 原文映射保留在 this.savedAttrText 里，还原时逐条写回。
+     * @param {string} from 源语言
+     * @param {string} to 目标语言
+     * @return {Promise<number>} 应用数量
+     */
+    async translateAttributes(from, to) {
+      const entries = this.attributeEntries || [];
+      if (entries.length === 0) return 0;
+
+      const texts = entries.map(entry => entry.text);
+      let results;
+      try {
+        // 注意 action 名必须是 translateBatch（见 service-worker 的 handlers 表），
+        // 写错会静默返回 {ok:false, error:"未知动作"}，属性一个都翻不了。
+        results = await sendMessage({
+          action: "translateBatch",
+          texts: texts,
+          sourceLanguage: from,
+          targetLanguage: to,
+        });
+      } catch {
+        return 0;
+      }
+      if (!results || !Array.isArray(results.results)) return 0;
+
+      const map = new Map();
+      texts.forEach((text, index) => {
+        const translated = results.results[index];
+        if (typeof translated === "string" && translated.trim() && translated !== text) {
+          map.set(text, translated);
+        }
+      });
+      if (map.size === 0) return 0;
+
+      if (!this.savedAttrText) this.savedAttrText = [];
+      const applied = DOM.applyAttributeTexts(entries, map, this.savedAttrText);
+      this.state = this.state === "translated" ? "translated" : this.state;
+      return applied;
     },
 
     /**
@@ -419,6 +481,13 @@
         if (this.units[index].restore()) restored++;
       }
 
+      // 属性文本单独还原：单元里没有它们的位置
+      if (this.savedAttrText && this.savedAttrText.length > 0) {
+        DOM.restoreAttributeTexts(this.savedAttrText);
+        this.savedAttrText = [];
+      }
+      this.attributeEntries = [];
+
       this.units = [];
       this.state = "idle";
       this.lastError = null;
@@ -443,9 +512,17 @@
       const fresh = [];
       for (const root of roots) {
         if (!root || root.nodeType !== 1) continue;
+        // 已翻译容器里新插入的内容不能当独立单元重翻：
+        // 否则 `<p data-tp-translated>译文<span>新增</span></p>` 会把
+        // 已翻译的父元素和新节点混在一起二次送翻，译文叠成两层。
+        // 已翻译容器的内部（不是容器本身）直接跳过
+        if (root.parentElement && root.parentElement.closest("[data-tp-translated]")) continue;
         const found = DOM.collectUnits(root, this.placeholderMode);
         for (const unit of found) {
-          if (!unit.translated) fresh.push(unit);
+          if (unit.translated) continue;
+          // 整段已是目标语言（中文页面里的中文段落）不再送翻
+          if (this.filterAlreadyTarget([unit], settings.targetLanguage).length === 0) continue;
+          fresh.push(unit);
         }
       }
       if (fresh.length === 0) return;
@@ -471,8 +548,17 @@
         if (self.observerSuppressed) return;
         const roots = [];
         for (const record of records) {
+          // 1) 新增节点：按元素收集根
           for (const node of record.addedNodes) {
             if (node.nodeType === 1) roots.push(/** @type {Element} */ (node));
+          }
+          // 2) 文本节点变化：React/Vue 只改 textContent 时**不会**产生 childList 记录，
+          //    只监听 childList 等于「动态页面的文本永远不翻」（实测 GitHub 的
+          //    实时刷新、SPA 路由切换后的标题全部漏翻）。取最近的可翻译祖先作为根。
+          if (record.type === "characterData" && record.target && record.target.nodeType === 3) {
+            const parent = record.target.parentElement;
+            // 已翻译容器里的文本变化是引擎自己写入的回声，不能当新内容
+            if (parent && !parent.closest("[data-tp-translated]")) roots.push(parent);
           }
         }
         if (roots.length === 0) return;
@@ -483,7 +569,11 @@
           self.translateNewContent(roots).catch(() => {});
         }, MUTATION_DEBOUNCE_MS);
       });
-      this.observer.observe(document.body, { childList: true, subtree: true });
+      this.observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
     },
 
     /**
