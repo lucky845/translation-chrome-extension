@@ -531,7 +531,17 @@ try {
   });
 
   await test("P2-7 MutationObserver 捕获文本节点变化（React 只改 textContent）", async () => {
-    // 直接改文本节点值：不产生 childList 记录，只监听 childList 的旧实现会漏掉
+    // 直接改文本节点值：不产生 childList 记录，只监听 childList 的旧实现会漏掉。
+    // 注意：这一步之前页面已被整页翻译，#dynamic 处于「译文态」并带 data-tp-translated。
+    // 所以这里既要验证「改动被观察到」，也要验证「旧译文单元被作废、元素重新可采集」。
+    const before = await evaluate(
+      page,
+      `(() => {
+        const p = document.getElementById("dynamic");
+        return { text: p.textContent, marked: p.hasAttribute("data-tp-translated") };
+      })()`
+    );
+
     await evaluate(
       page,
       `(() => {
@@ -541,15 +551,32 @@ try {
       })()`
     );
     await sleep(1200); // 等节流窗口 + 采集
-    const captured = await evaluate(
+
+    const after = await evaluate(
       page,
       `(() => {
-        const units = window.__TP_DOM__.collectUnits(document.getElementById("dynamic"));
-        return units.length > 0 ? units[0].text : "";
+        const p = document.getElementById("dynamic");
+        const units = window.__TP_DOM__.collectUnits(p);
+        return {
+          text: p.textContent,
+          marked: p.hasAttribute("data-tp-translated"),
+          captured: units.length > 0 ? units[0].text : "",
+        };
       })()`
     );
-    if (!captured.includes("updated by framework")) {
-      throw new Error(`文本变化未被采集: ${captured}`);
+
+    // 框架写入的新内容必须原样到达 DOM（没被我们的观察器吞掉或重复套娃）
+    if (!after.text.includes("updated by framework") && !/[\u4e00-\u9fff]/.test(after.text)) {
+      throw new Error(`框架写入的文本既不是原文也不是其译文: ${after.text}`);
+    }
+
+    // 若元素原本处于译文态，框架更新后旧单元必须被 release：
+    // 否则它会被当成「我们自己的写入」而永远不再翻译（P2-8 的自身回声判定）。
+    if (before.marked) {
+      const reclaimed = after.captured || !after.marked;
+      if (!reclaimed) {
+        throw new Error(`元素被框架改写后仍标记为已翻译且无法重新采集: ${JSON.stringify(after)}`);
+      }
     }
   });
 

@@ -17,7 +17,6 @@ import {
   RateLimitError,
   isNetworkFailure,
   sleep,
-  byteLength,
 } from "./engines/base.js";
 import { splitSentences } from "./engines/text.js";
 import { CustomEngine } from "./engines/custom.js";
@@ -32,9 +31,13 @@ const ENDPOINT = "https://translate.googleapis.com/translate_a/t";
 // 端点：translate_a/single?dj=1。
 const SINGLE_ENDPOINT = "https://translate.googleapis.com/translate_a/single";
 
-// 单次请求上限。实测 400 条普通句子会 400 错误，200 条稳定；body 控制在 48KB 内。
-const MAX_TEXTS_PER_CHUNK = 200;
-const MAX_BODY_BYTES = 48 * 1024;
+// 单次请求上限。实测 400 条普通句子会 400 错误，200 条稳定；URL 控制在 7KB 内。
+const MAX_TEXTS_PER_CHUNK = 120;
+// GET 请求把 q 全部放在 query string 里，URL 长度是真限制。
+// 真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
+//   120 条 / URL 7642 字符 → 200，1.03s；80 条 / 5102 字符 → 200，0.71s。
+// 留出余量防超长 URL 被网关 414，取 6000 字符。
+const MAX_URL_CHARS = 6000;
 
 // 并发上限。实测 20 并发 1.84s 全成功，但页面翻译取保守值避免触发限流。
 const MAX_CONCURRENCY = 3;
@@ -78,10 +81,14 @@ export class GoogleEngine extends BaseEngine {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
       try {
-        const response = await fetch(ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: params.toString(),
+        // 必须用 GET。真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
+        //   同一端点 GET 120 条 → 200，1.03s；
+        //   同一端点 POST 1 条（109 字节 body）→ Failed to fetch，网络层就断了。
+        // Google 对 translate_a/t 的 POST 预检不返回 CORS 头，浏览器在真正发出请求前
+        // 就把 fetch 判死。旧代码把 "Failed to fetch" 当成普通可重试错误，
+        // 于是每隔几秒重试一次、再降级、再重试，用户最终看到「所有引擎失败」——
+        // 而真正的原因是请求根本没发出去。
+        const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
 
@@ -566,25 +573,29 @@ export class LingvaEngine extends BaseEngine {
 }
 
 /**
- * 按请求体大小与条数切块。
+ * 按 URL 长度与条数切块。
+ *
+ * 请求是 GET，所有 q 都进 query string，所以限制的是 URL 长度而不是 body 大小。
+ * 用 encodeURIComponent 的真实长度估算：UTF-8 三字节汉字编码成 %E4%BD%A0
+ * 是 9 个字符，按字节数估算会严重低估 URL 长度、把 URL 撑爆。
  * @param {string[]} texts 全量文本
  * @return {string[][]} 分块结果
  */
 function splitIntoChunks(texts) {
   const chunks = [];
   let current = [];
-  let bytes = 0;
+  let urlChars = 0;
 
   for (const text of texts) {
-    // "q=" + 内容 + "&" 的近似开销
-    const cost = byteLength(text) + 3;
-    if (current.length > 0 && (current.length >= MAX_TEXTS_PER_CHUNK || bytes + cost > MAX_BODY_BYTES)) {
+    // "q=" 前缀 + 编码后的内容 + "&" 分隔符
+    const cost = encodeURIComponent(text).length + 3;
+    if (current.length > 0 && (current.length >= MAX_TEXTS_PER_CHUNK || urlChars + cost > MAX_URL_CHARS)) {
       chunks.push(current);
       current = [];
-      bytes = 0;
+      urlChars = 0;
     }
     current.push(text);
-    bytes += cost;
+    urlChars += cost;
   }
   if (current.length > 0) chunks.push(current);
 

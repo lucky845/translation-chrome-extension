@@ -169,6 +169,14 @@ const ENGINE_COOLDOWN_MS = 30000;
 const cooldowns = new Map();
 
 /**
+ * 引擎名 → 上一次成功的时间戳。
+ * 免费端点轮流限流，与其死守首选引擎、每批先撞一次 429，
+ * 不如让最近成功过的引擎先上。
+ * @type {Map<string, number>}
+ */
+const lastSuccess = new Map();
+
+/**
  * 查询引擎是否处于冷却期。
  * @param {string} name 引擎名
  * @param {number} now 当前时间戳
@@ -262,6 +270,11 @@ async function runWithFallback(texts, from, to, engineName) {
     else ready.push(name);
   }
 
+  // 把最近成功过的引擎往前排：免费端点轮着限流，
+  // 死守首选引擎只会每批先撞一次 429、多等一次超时。
+  // 谁上一次成功过，这一次就用谁。
+  ready.sort((a, b) => lastSuccess.get(b) - lastSuccess.get(a));
+
   /** @type {string[]} */
   const failures = [];
   /** @type {Array<string[]>} */
@@ -284,6 +297,7 @@ async function runWithFallback(texts, from, to, engineName) {
       try {
         const results = await engine.translate(texts, from, to);
         clearCooldown(name);
+        lastSuccess.set(name, Date.now());
         const degraded = name !== engineName;
         return {
           results,

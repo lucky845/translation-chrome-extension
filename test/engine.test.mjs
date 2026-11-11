@@ -759,3 +759,52 @@ if (environmentLimited) {
 }
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);
 if (failed > 0) process.exitCode = 1;
+
+await test("Google：批量请求必须走 GET（POST 会被浏览器预检拒绝）", async () => {
+  // 真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
+  //   同一 translate_a/t 端点，GET 120 条 → 200；POST 1 条 → Failed to fetch。
+  // Google 对 POST 的预检响应不带 CORS 头，浏览器在请求发出前就把它判死。
+  // 而 mock fetch 不区分方法，旧代码的 POST 在测试里从没暴露过——补这条锁死。
+  const seen = [];
+  await withMockFetch(
+    (url, init) => {
+      seen.push({ url, method: (init && init.method) || "GET" });
+      const count = (url.match(/[?&]q=/g) || []).length;
+      return new Response(JSON.stringify(Array.from({ length: count }, (_, i) => [`译文${i}`, "en"])), { status: 200 });
+    },
+    async () => {
+      const engine = new GoogleEngine();
+      await engine.translate(["one", "two", "three"], "auto", "zh-CN");
+    }
+  );
+
+  assert(seen.length > 0, "应当发出至少一次请求");
+  for (const request of seen) {
+    assert.strictEqual(request.method, "GET", `Google 批量请求必须用 GET，实际 ${request.method}`);
+    assert(request.url.includes("?client=gtx"), "参数应拼在 query string 里");
+  }
+});
+
+await test("Google：GET 分块按编码后的 URL 长度切分", async () => {
+  // 汉字经 encodeURIComponent 后膨胀成 9 个字符，按字节数估会严重低估 URL 长度。
+  const seen = [];
+  const texts = Array.from({ length: 60 }, () => "这是一段用于测试分块策略的中文文本");
+  await withMockFetch(
+    (url, init) => {
+      seen.push({ url, method: (init && init.method) || "GET" });
+      const count = (url.match(/[?&]q=/g) || []).length;
+      return new Response(JSON.stringify(Array.from({ length: count }, (_, i) => [`译文${i}`, "zh-CN"])), {
+        status: 200,
+      });
+    },
+    async () => {
+      const engine = new GoogleEngine();
+      const results = await engine.translate(texts, "en", "zh-CN");
+      assert.strictEqual(results.length, texts.length, "结果数量必须与输入一致");
+    }
+  );
+
+  for (const request of seen) {
+    assert(request.url.length <= 6600, `URL 长度 ${request.url.length} 超过安全上限`);
+  }
+});
