@@ -404,6 +404,37 @@ await test("被框架覆盖过译文再恢复，不会写回过期原文", async
   assert.equal(p.textContent, "Hello again from React.", `恢复后残留: ${p.textContent}`);
 });
 
+await test("SPA 路由切换后旧单元被回收，不会越积越多", async () => {
+  const { window, dispatch } = await loadContent('<div id="app"><p>Home page text.</p></div>');
+  await dispatch({ action: "translatePage" });
+  const app = window.document.getElementById("app");
+  assert.equal(app.textContent, "译[Home page text.]");
+  const firstCount = (await dispatch({ action: "getStatus" })).count;
+
+  // React Router / Vue Router：同一容器整体替换内容，旧元素被销毁
+  app.innerHTML = "<p>About page text.</p>";
+  await new Promise(resolve => setTimeout(resolve, 700));
+
+  const state = await dispatch({ action: "getStatus" });
+  assert.equal(state.detached, 0, `回收后不应残留游离单元，实际 ${state.detached}`);
+  assert.equal(app.textContent, "译[About page text.]", "新路由内容应被翻译");
+  assert.equal(state.count, firstCount, `单元总数应保持（1 段换 1 段），实际 ${state.count}`);
+});
+
+await test("路由切到没有文字的页面时，旧单元照样被回收", async () => {
+  const { window, dispatch } = await loadContent('<div id="app"><p>Home page text.</p></div>');
+  await dispatch({ action: "translatePage" });
+  const app = window.document.getElementById("app");
+
+  // 切成纯图片页：没有新文本，roots 为空，但旧单元必须一样被清掉
+  app.innerHTML = '<img src="/hero.png" alt="">';
+  await new Promise(resolve => setTimeout(resolve, 700));
+
+  const state = await dispatch({ action: "getStatus" });
+  assert.equal(state.detached, 0, `无文本页面也应回收游离单元，实际 ${state.detached}`);
+  assert.equal(state.count, 0, `旧单元应全部回收，实际剩 ${state.count}`);
+});
+
 const failed = results.filter(result => !result.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);

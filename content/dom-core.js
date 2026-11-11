@@ -163,11 +163,12 @@
       if (display === "contents") return false;
       if (display) {
         const outer = display.split(" ")[0];
+        // 只有真正的行内盒才算 inline：它会和同一行的文字连成一句话送翻。
+        // `inline-block` / `inline-flex` / `inline-grid` / `inline-table` **不算**——
+        // 它们内部是块级格式化上下文，能装块级子元素，也没有跨盒的句子。
+        // 把它们当 inline 的后果：`<div style="display:inline-block"><p>…</p></div>`
+        // 会被整块当成一个行内占位符，父级不再下钻，里面的段落永远翻不到。
         if (outer === "inline" || outer === "ruby" || outer === "ruby-text") return true;
-        // inline-block / inline-flex / inline-table 是「行内盒」：
-        // 做占位符时算 inline（内容要翻），但它是独立盒子，不参与折行。
-        if (outer === "inline-block" || outer === "inline-flex" || outer === "inline-grid" || outer === "inline-table")
-          return true;
         return false;
       }
     }
@@ -200,12 +201,33 @@
    * @param {Element} element 元素
    * @return {boolean} true 表示跳过
    */
+  /**
+   * 元素是否被 CSS 完全隐藏。
+   *
+   * 只认 inline style 上的 display:none / visibility:hidden：
+   * 样式表里的规则要算 computed style，遍历每个节点都算一次太贵，
+   * 而采集本身就发生在主线程上，不能为了省几次请求把页面卡住。
+   * @param {Element} element 元素
+   * @return {boolean} true 表示不可见
+   */
+  function isHidden(element) {
+    const style = element.getAttribute("style");
+    if (!style) return false;
+    return /(?:^|;)\s*display\s*:\s*none/i.test(style) || /(?:^|;)\s*visibility\s*:\s*hidden/i.test(style);
+  }
+
   function shouldSkip(element) {
     if (!element || element.nodeType !== ELEMENT_NODE) return false;
     const tag = element.tagName.toLowerCase();
     if (SKIP_TAGS.has(tag)) return true;
     if (element.isContentEditable) return true;
     if (element.getAttribute("contenteditable") === "true") return true;
+    // display:none 的内容翻了也看不见，白烧配额；弹层打开时会以新增节点的形式
+    // 重新进入 observer，那时才会被采集。
+    if (isHidden(element)) return true;
+    // aria-hidden="true" 是屏读器看不到的装饰性内容，翻它往往把布局字面量
+    // （分隔符、计数、图标文字）翻乱，不加分只扣分。
+    if (element.getAttribute("aria-hidden") === "true") return true;
     if (element.getAttribute("translate") === "no") return true;
     if (element.classList && element.classList.contains("notranslate")) return true;
     // 本扩展写入的译文容器：绝不能被二次采集，否则会原文与译文来回翻。
@@ -369,6 +391,8 @@
       this.originalHtml = null;
       /** @type {string|null} 应用译文后的文本指纹，用于判断页面是否被外部改动 */
       this.appliedText = null;
+      /** 建单元时元素是否在文档里：用来区分「路由切走了」和「本来就离屏」 */
+      this.wasConnected = element.isConnected !== false;
 
       // 浅层单元还原用
       this.savedOwnNodes = [];
@@ -832,7 +856,14 @@
      * @return {boolean} true 表示标记已过期
      */
     isStale() {
-      if (!this.element || this.appliedText === null || !this.translated) return false;
+      if (!this.element) return true;
+      // 元素已经不在文档里 —— SPA 路由切换把整块容器换掉了。
+      // 这种单元留在 units 里只有一个下场：数组越积越长（每条路由一批），
+      // 恢复时还会去改写一个已经游离的节点。
+      // 只有「建单元时就在文档里、现在不在了」才算失联：
+      // 离屏采集（display:none 的弹层）本来就可能在文档外建单元。
+      if (this.wasConnected && this.element.isConnected === false) return true;
+      if (this.appliedText === null || !this.translated) return false;
       return this.normalizeText(this.element.textContent) !== this.appliedText;
     }
 

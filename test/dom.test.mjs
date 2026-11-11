@@ -433,6 +433,31 @@ test("英文页面判断为目标语言不成立", () => {
   assert.equal(api.isPageAlreadyTarget("zh-CN"), false);
 });
 
+console.log("\n[9] 采集边界（隐藏元素与行内盒）");
+test("display:none 与 aria-hidden 的内容不送翻", () => {
+  const { api, win } = load(`<div style="display:none"><p>Hidden text here.</p></div>
+    <div aria-hidden="true"><p>Aria hidden text.</p></div>
+    <p>Normal paragraph.</p>`);
+  const texts = api.collectUnits(win.document.body, "tag").map(u => u.text);
+  assert.deepEqual(texts, ["Normal paragraph."], `实际采到: ${texts.join("|")}`);
+});
+
+test("display:inline-block 容器继续下钻，不整块当行内占位符", () => {
+  const { api, win } = load(`<div style="display: inline-block"><p>Inline block text.</p></div>`);
+  const units = api.collectUnits(win.document.body, "tag");
+  const texts = units.map(u => u.text);
+  assert.ok(texts.includes("Inline block text."), `inline-block 里的段落漏翻: ${texts.join("|")}`);
+});
+
+test("行内徽章仍是独立单元，不会被父段落吞并", () => {
+  const { api, win } = load(`<p>Status <span style="display: inline-block">Beta</span></p>`);
+  const texts = api.collectUnits(win.document.body, "tag").map(u => u.text);
+  assert.ok(
+    texts.some(t => t.includes("Beta")),
+    `徽章应被采到: ${texts.join("|")}`
+  );
+});
+
 console.log("\n[6] 代码审查回归（P0/P1 修复锁死）");
 test("P0-1 容器有直属文本+块级子元素时建浅层单元，内层译文不被抹掉", () => {
   const { api, win } = load(

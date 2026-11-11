@@ -658,13 +658,11 @@
       // 留在 units 里只会让数组无限膨胀。先摘掉，再用新内容重新立单元。
       const takenElements = new Set(this.units.map(unit => unit.element).filter(Boolean));
 
-      // 元素带着 data-tp-translated，但文本已经被框架换掉了：
+      // 元素带着 data-tp-translated，但文本已经被框架换掉了（或元素已被路由切走）：
       // 标记过期，旧单元保存的译文与当前 DOM 对不上。
       // 不清掉标记的话，DOM.collectUnits 会把整个元素当「已是译文」跳过，
       // 结果就是 SPA 重渲染后这块内容永远不再翻译。
-      for (const unit of this.units) {
-        if (unit.isStale && unit.isStale()) unit.release();
-      }
+      this.releaseStaleUnits();
 
       const fresh = [];
       const freshElements = new Set();
@@ -707,6 +705,30 @@
       if (remaining.length > 0) {
         await this.translateUnits(remaining, settings.targetLanguage);
       }
+    },
+
+    /**
+     * 回收已经失效的单元。
+     *
+     * 两种失效：框架把译文换回了原文（文本指纹不符），
+     * 或者路由切换把元素整个带走了（元素游离）。
+     * 都走 release()：摘标记、还原属性、不再参与 restore。
+     * @return {number} 回收数量
+     */
+    releaseStaleUnits() {
+      if (this.units.length === 0) return 0;
+      let released = 0;
+      const kept = [];
+      for (const unit of this.units) {
+        if (unit.isStale && unit.isStale()) {
+          if (unit.release) unit.release();
+          released++;
+          continue;
+        }
+        kept.push(unit);
+      }
+      if (released > 0) this.units = kept;
+      return released;
     },
 
     /**
@@ -765,6 +787,12 @@
             if (parent && !self.writtenRecently(parent)) roots.push(parent);
           }
         }
+        // 3) 已失效的旧单元先回收，与有没有新内容无关。
+        //    SPA 路由切到一个没有文字的页面时 roots 是空的，
+        //    但上一页留下的单元全都指向游离节点，必须在这里清掉。
+        //    放在 translateNewContent 之外：它开头就 `state !== "translated"` 直接返回。
+        if (self.state === "translated") self.releaseStaleUnits();
+
         if (roots.length === 0) return;
 
         if (self.mutationTimer !== null) clearTimeout(self.mutationTimer);
@@ -807,9 +835,16 @@
      * @return {Object} 状态
      */
     getStatus() {
+      // 游离单元数：路由切走后没能回收的会一直挂着，是内存泄漏的唯一观测点，
+      // 暴露出来既方便弹窗诊断，也让回归测试能直接断言它必须是 0。
+      let detached = 0;
+      for (const unit of this.units) {
+        if (unit.element && unit.element.isConnected === false) detached++;
+      }
       return {
         state: this.state,
         count: this.units.length,
+        detached,
         degraded: this.degraded,
         offline: Boolean(OFFLINE && OFFLINE.supported),
         error: this.lastError,
