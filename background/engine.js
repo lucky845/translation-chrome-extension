@@ -14,6 +14,7 @@ import {
   BaseEngine,
   RetryableError,
   FatalTranslationError,
+  RateLimitError,
   isNetworkFailure,
   sleep,
   byteLength,
@@ -85,9 +86,16 @@ export class GoogleEngine extends BaseEngine {
         });
 
         if (!response.ok) {
-          // 429 是限流，退避重试是正确策略；其他 4xx 重试不会有不同结果
+          // 其他 4xx 重试不会有不同结果
           if (response.status !== 429 && response.status >= 400 && response.status < 500) {
             throw new FatalTranslationError(`HTTP ${response.status}`);
+          }
+          // 429 不是「再试一次就好」的瞬时错误，而是配额用尽。
+          // 真机实测：200 段连续 429 时，原逻辑「3 次退避重试 + 逐条兜底」
+          // 让一次翻译白等 103 秒，而一条都没成。限流要快速失败，
+          // 交给降级链换引擎，而不是在原地把 200 条逐条再打一遍。
+          if (response.status === 429) {
+            throw new RateLimitError(`HTTP 429（限流）`);
           }
           throw new RetryableError(`HTTP ${response.status}`);
         }
@@ -99,6 +107,9 @@ export class GoogleEngine extends BaseEngine {
         }
         return data.map(GoogleEngine.normalizeItem);
       } catch (error) {
+        // 限流不重试：退避 3 次（0.5+1+2 秒）只是让用户多等 3 秒，
+        // 配额窗口通常以分钟计，这 3 秒等不来配额，只会拖慢降级。
+        if (error instanceof RateLimitError) throw error;
         if (error instanceof FatalTranslationError) throw error;
         // 网络层失败（被墙/断网/超时）重试只会再等一个超时周期，直接交给降级链
         if (isNetworkFailure(error)) {
@@ -108,7 +119,11 @@ export class GoogleEngine extends BaseEngine {
         lastError = error;
       }
     }
-    // 批量端点反复失败：改用结构化单条端点逐条补，
+    // 限流时不逐条补：每条都会同样被拒，白烧时间。
+    // 实测 200 条逐条兜底要 100 秒以上，且一条都不成。
+    if (lastError instanceof RateLimitError) throw lastError;
+
+    // 批量端点反复失败（结构异常等）：改用结构化单条端点逐条补，
     // 比整批放弃或原样返回更有价值（长页面里丢一两条很常见）。
     try {
       const results = [];

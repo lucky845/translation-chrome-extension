@@ -361,6 +361,34 @@ await test("缓存：翻译失败的结果不得写入缓存（否则永久卡�
   clearCache();
 });
 
+await test("Google 429 立刻失败，不走逐条兜底（否则一次翻译白等 100 秒）", async () => {
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response("blocked", { status: 429 });
+    },
+    async () => {
+      const { GoogleEngine } = await import("../background/engine.js");
+      const engine = new GoogleEngine();
+      const texts = Array.from({ length: 50 }, (_, i) => `Paragraph ${i}.`);
+      const started = Date.now();
+      let message = "";
+      try {
+        await engine.translate(texts, "auto", "zh-CN");
+      } catch (error) {
+        message = error.message;
+      }
+      const elapsed = Date.now() - started;
+      assert.match(message, /429/, `应报 429，实际: ${message}`);
+      // 旧实现：批量重试 3 次 + 50 条逐条兜底 = 53 次请求、数秒退避
+      assert.ok(calls < 10, `限流时必须快速失败，实际发了 ${calls} 次请求`);
+      assert.ok(elapsed < 3000, `限流时必须快速失败，实际耗时 ${elapsed}ms`);
+      assert.match(message, /限流/, `错误信息应说明是限流，实际: ${message}`);
+    }
+  );
+});
+
 await test("熔断：引擎失败后进入冷却，下一批不再重付超时", async () => {
   globalThis.chrome = {
     storage: {

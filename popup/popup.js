@@ -209,7 +209,13 @@
 
     if (action === "translatePage") {
       if (result.success) {
-        setStatus(els, `已翻译 ${result.count} 处文本`, "ok");
+        // 有段落没翻成就必须说出来。旧实现一律显示「已翻译 N 处」，
+        // 用户看着半页英文却以为翻完了，只能反复点按钮（真机实测 240 段里 85 段失败）。
+        if (result.failed > 0) {
+          setStatus(els, result.error || `有 ${result.failed} 段未翻译，可再点一次重试`, "warn");
+        } else {
+          setStatus(els, `已翻译 ${result.count} 处文本`, "ok");
+        }
         setButtons(els, true);
       } else {
         setStatus(els, result.error || "翻译失败", "warn");

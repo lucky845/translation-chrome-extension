@@ -41,6 +41,20 @@ export class RetryableError extends Error {
 }
 
 /**
+ * 限流错误（HTTP 429）：明确表示配额用尽，重试与逐条兜底都只会更糟。
+ *
+ * 与 RetryableError 的区别是策略而不是语义：429 看起来「等等就好」，
+ * 但免费端点的限流窗口是分钟级的，退避 3 次 + 逐条补发只会让用户白等
+ * （真机实测 200 段白等 103 秒、一条都没成）。这类错误要立刻交给降级链。
+ */
+export class RateLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
+
+/**
  * 不可恢复的错误（如 4xx），不应重试也不应触发降级循环。
  */
 export class FatalTranslationError extends Error {

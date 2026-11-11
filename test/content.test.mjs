@@ -545,6 +545,94 @@ await test("滚动到远端后，那里的内容插到队首先翻", async () =>
   assert.ok(deep.length > 0, `滚动到远端后应补翻那里的内容，实际补翻 ${late.length} 条且没有远端段落`);
 });
 
+await test("引擎失败时，失败的批次必须重试而不是静默丢弃", async () => {
+  const paras = Array.from({ length: 250 }, (_, i) => `<p id="p${i}">Paragraph ${i} text.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "off" } });
+
+  // 前 2 次请求全挂（模拟免费引擎 429），之后恢复
+  let calls = 0;
+  const original = env.window.chrome.runtime.sendMessage;
+  const attempted = [];
+  env.window.chrome.runtime.sendMessage = (message, callback) => {
+    if (message.action === "translateBatch") {
+      calls++;
+      attempted.push(message.texts);
+      if (calls <= 2) {
+        callback({ ok: false, error: "所有引擎失败：HTTP 429" });
+        return undefined;
+      }
+    }
+    return original(message, callback);
+  };
+
+  const result = await env.dispatch({ action: "translatePage" });
+  // 前两批失败，之后重新发出去：失败批次的文字必须重新出现在后来的请求里
+  assert.equal(calls, attempted.length, "每次请求都应被记录");
+  const failedTexts = attempted[0].concat(attempted[1]);
+  const later = new Set(attempted.slice(2).flatMap(texts => texts));
+  const resent = failedTexts.filter(text => later.has(text));
+  assert.ok(
+    resent.length > 0,
+    `失败批次的文字应被重发，实际重发 ${resent.length}/${failedTexts.length} 条；共 ${calls} 次请求`
+  );
+  assert.equal(result.failed || 0, 0, `重试成功后不应报失败，实际 ${result.failed}`);
+  assert.equal(result.success, true);
+});
+
+await test("重试后仍有失败时，不能冒充「全部翻译完成」", async () => {
+  const paras = Array.from({ length: 250 }, (_, i) => `<p id="p${i}">Paragraph ${i} text.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "off" } });
+
+  let calls = 0;
+  const original = env.window.chrome.runtime.sendMessage;
+  env.window.chrome.runtime.sendMessage = (message, callback) => {
+    if (message.action === "translateBatch") {
+      calls++;
+      if (calls > 1) {
+        callback({ ok: false, error: "所有引擎失败：HTTP 429" });
+        return undefined;
+      }
+    }
+    return original(message, callback);
+  };
+
+  const result = await env.dispatch({ action: "translatePage" });
+  assert.equal(result.success, true, "部分成功仍应算成功（有内容被翻译）");
+  assert.ok(result.failed > 0, `有段落翻不了必须如实上报，实际 failed=${result.failed}`);
+  assert.match(result.error || "", /未翻译/, `应提示有多少段没翻成，实际: ${result.error}`);
+});
+
+await test("引擎连续拒绝时立刻收工，不让用户白等", async () => {
+  const paras = Array.from({ length: 600 }, (_, i) => `<p id="p${i}">Paragraph ${i} text.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "off" } });
+
+  // 一直失败：模拟被限流
+  env.window.chrome.runtime.sendMessage = (message, callback) => {
+    if (message.action === "translateBatch") {
+      callback({ ok: false, error: "所有引擎失败：HTTP 429" });
+      return undefined;
+    }
+    if (message.action === "getSettings") {
+      callback({
+        ok: true,
+        settings: { targetLanguage: "zh-CN", engine: "google", useOffline: "off", lazyTranslate: "off" },
+      });
+      return undefined;
+    }
+    callback({ ok: true });
+    return undefined;
+  };
+
+  const started = Date.now();
+  const result = await env.dispatch({ action: "translatePage" });
+  const elapsed = Date.now() - started;
+
+  // 600 段 / 每批 120 = 5 批；连输 3 批就该停，不该把 5 批全打完再重试
+  assert.ok(elapsed < 20000, `连续失败时应尽早收工，实际耗时 ${elapsed}ms`);
+  assert.ok(result.failed > 0, `必须如实上报失败段数，实际 ${result.failed}`);
+  assert.match(result.error || "", /连续/, `错误信息应说明是连续失败，实际: ${result.error}`);
+});
+
 const failed = results.filter(result => !result.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);

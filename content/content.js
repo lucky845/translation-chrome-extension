@@ -285,8 +285,12 @@
         }
 
         const remaining = this.units.filter(unit => !unit.translated);
+        let failedCount = 0;
         if (remaining.length > 0) {
           applied += await this.translateUnits(remaining, target, { lazy: settings.lazyTranslate !== "off" });
+          // 重试后仍然失败的段数：必须如实上报，不能让「翻了一半」冒充「翻译完成」
+          failedCount = this.failedCount || 0;
+          this.failedCount = 0;
         }
 
         // 属性文本：正文翻完再补一轮，复用同一批引擎与缓存。
@@ -302,12 +306,33 @@
 
         if (applied === 0) {
           this.state = "idle";
-          return { success: false, count: 0, error: this.lastError || "翻译失败" };
+          this.hideIndicator();
+          // 一段都没翻成：要把「失败了多少段」也报出去，
+          // 否则用户只看到「翻译失败」，不知道是整页没翻还是翻了一半。
+          return {
+            success: false,
+            count: 0,
+            failed: failedCount || this.units.length,
+            error: this.lastError || "翻译失败",
+          };
         }
 
         this.state = "translated";
         this.attachObserver();
         const elapsed = Math.max(1, Date.now() - this.startedAt);
+
+        // 有段落没翻成时必须说出来。
+        // 旧实现只要 applied > 0 就报 success: true、显示「翻译完成」，
+        // 用户看着半页英文找不到原因（真机实测 240 段里只成功 155 段）。
+        // 弹窗据此提示「重新翻译」，用户能自己重试补齐。
+        if (failedCount > 0) {
+          const total = applied + failedCount;
+          this.lastError = `有 ${failedCount} 段未翻译（共 ${total} 段），多为引擎限流或网络波动，可点「重新翻译」补齐`;
+          this.showIndicator(`已翻译 ${applied}/${total} 段 · 剩余 ${failedCount} 段失败`, true);
+          setTimeout(() => this.hideIndicator(), 5000);
+          return { success: true, count: applied, elapsed, failed: failedCount, error: this.lastError };
+        }
+
         this.showIndicator(`已翻译 ${applied} 段 · ${(applied / (elapsed / 1000)).toFixed(1)} 段/秒`, true);
         setTimeout(() => this.hideIndicator(), 2500);
         return { success: true, count: applied, elapsed };
@@ -544,6 +569,10 @@
 
       /** 远端单元（视口外且超出 LAZY_MARGIN_PX），等滚动或等空闲再翻 */
       let deferred = [];
+      /** 请求失败的单元：循环结束后重试一轮，不能静默丢弃 */
+      const failed = [];
+      /** 连续失败批次数：达到上限就收工，不在限流上死磕 */
+      let consecutiveFails = 0;
       const idleFor = () => Date.now() - lastScrollAt;
 
       /**
@@ -559,6 +588,10 @@
       // 早补晚补无所谓——但「翻译中」这个状态不该挂太久，那正是用户
       // 抱怨的「翻完一直显示翻译中」。
       const LAZY_HARD_LIMIT_MS = 2000;
+      /** 失败批次重试前的等待：限流通常是几秒的窗口，太短没意义，太长用户等不起 */
+      const RETRY_AFTER_FAIL_MS = 3000;
+      /** 连续失败多少批就停手：连输 3 次说明是限流/断网，继续打只会更糟 */
+      const MAX_CONSECUTIVE_FAILS = 3;
       const lazyStartedAt = Date.now();
 
       try {
@@ -642,8 +675,24 @@
 
           if (!response || !response.ok) {
             if (!this.lastError) this.lastError = (response && response.error) || "翻译请求失败";
+            // 失败批次不能就这么丢掉：用户看到的会是「翻译完成，但一半还是英文」。
+            // 收进 failed，循环结束后统一重试一轮——限流往往是短窗口，
+            // 隔一会儿再打一次能捞回不少（真机实测 429 之后 3 秒重试成功率高）。
+            failed.push(...batch);
+            // 连续失败就早点收工：引擎被限流时死磕下去只会让用户干等
+            // （真机实测 200 段连续 429 时白等 103 秒）。剩下的原样报给用户，
+            // 他们可以过一会儿点「重新翻译」。
+            consecutiveFails++;
+            if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
+              this.lastError = `引擎连续 ${consecutiveFails} 次拒绝请求（多为限流），已暂停翻译`;
+              failed.push(...pending);
+              pending.length = 0;
+              deferred.length = 0;
+              break;
+            }
             continue;
           }
+          consecutiveFails = 0;
 
           const results = response.results || [];
           const whole = [];
@@ -730,6 +779,61 @@
 
           this.showIndicator("翻译中… " + applied + "/" + units.length, true);
         }
+
+        // 失败批次重试一轮。
+        // 真机实测：免费引擎一次送 200 条会 429，但那只是短窗口限流——
+        // 隔 3 秒再来一次往往就过了。旧实现把失败批次直接丢掉，
+        // 用户看到的是「翻译完成，可页面还有一半是英文」。
+        if (failed.length > 0 && this.state !== "idle" && !this.restoring) {
+          await delay(RETRY_AFTER_FAIL_MS);
+          this.showIndicator("重试未完成的段落…", true);
+          const retryPool = failed.slice();
+          failed.length = 0;
+          while (retryPool.length > 0 && this.state !== "idle" && !this.restoring) {
+            const batch = retryPool.splice(0, UNIT_BATCH_SIZE);
+            const requests = [];
+            const plan = batch.map(unit => {
+              const parts = splitForEngine(unit.text, MAX_UNIT_CHARS);
+              const start = requests.length;
+              requests.push(...parts);
+              return { unit, start, count: parts.length };
+            });
+            let response = null;
+            try {
+              response = await sendMessage({
+                action: "translateBatch",
+                texts: requests,
+                targetLanguage: target,
+              });
+            } catch {
+              response = null;
+            }
+            if (!response || !response.ok) {
+              // 还是不行：剩下的交回 failed，由调用方如实汇报「仅 N/M 段」
+              failed.push(...batch, ...retryPool);
+              break;
+            }
+            const results = response.results || [];
+            plan.forEach(item => {
+              const slices = [];
+              for (let k = 0; k < item.count; k++) {
+                const piece = results[item.start + k];
+                if (!piece || typeof piece.text !== "string") break;
+                slices.push(piece.text);
+              }
+              if (slices.length !== item.count) return;
+              const text = joinSlices(slices);
+              const unit = item.unit;
+              if (unit.braceMap && unit.braceMap.size > 0 && unit.applyBrace(text)) {
+                applied++;
+                return;
+              }
+              if (unit.apply(text)) applied++;
+              else if (unit.plainText && unit.applyWholeText(text)) applied++;
+            });
+            this.showIndicator("翻译中… " + applied + "/" + units.length, true);
+          }
+        }
       } finally {
         if (observer) observer.disconnect();
         if (canLazy) window.removeEventListener("scroll", onScroll);
@@ -739,6 +843,8 @@
         }
       }
 
+      // 还失败的留给调用方上报：不能把「翻了一半」说成「翻译完成」
+      this.failedCount = failed.length;
       return applied;
     },
 
