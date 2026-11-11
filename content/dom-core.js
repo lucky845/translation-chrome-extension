@@ -730,11 +730,16 @@
     markTranslated() {
       if (!this.element || !this.element.setAttribute) return;
 
-      // 记录原始属性，恢复时要逐字节还原（class=""/style="" 这种残留会让还原断言失败）
-      this.savedAttrs = {
-        class: this.element.getAttribute("class"),
-        style: this.element.getAttribute("style"),
-      };
+      // 记录原始属性，恢复时要逐字节还原（class=""/style="" 这种残留会让还原断言失败）。
+      // 只记第一次：release 之后重新 apply 时元素已经摘干净了当然该重记，
+      // 但 release 前的二次 apply（同一单元多次落译文）必须保留最初那份快照，
+      // 否则会把翻译期间我们加上去的 class/style 当成「原文」固化下来。
+      if (!this.savedAttrs) {
+        this.savedAttrs = {
+          class: this.element.getAttribute("class"),
+          style: this.element.getAttribute("style"),
+        };
+      }
 
       this.element.setAttribute("data-tp-translated", "");
       this.element.classList.add("notranslate");
@@ -816,6 +821,56 @@
       this.originalHtml = null;
       this.translated = false;
       return true;
+    }
+
+    /**
+     * 译文是否已被页面改写。
+     *
+     * data-tp-translated 标记的作用是「这里现在放的是我的译文」。
+     * React/Vue 重渲染会直接把文本换回原文，标记却留在元素上——
+     * 采集时整块被当成译文跳过，这块内容从此永远不再翻译。
+     * @return {boolean} true 表示标记已过期
+     */
+    isStale() {
+      if (!this.element || this.appliedText === null || !this.translated) return false;
+      return this.normalizeText(this.element.textContent) !== this.appliedText;
+    }
+
+    /**
+     * 主动放弃这个单元：摘掉标记、忘掉快照，不再参与 restore。
+     *
+     * 页面已经把这块 DOM 换掉了，我们保存的原文快照已经失真，
+     * 留着只会在恢复时把框架的新内容写回旧值。
+     */
+    release() {
+      const el = this.element;
+      if (!el || !el.removeAttribute) {
+        this.originalHtml = null;
+        this.appliedText = null;
+        this.translated = false;
+        return;
+      }
+      // markTranslated 打了两样东西：data-tp-translated 与 class="notranslate"。
+      // 只摘属性会漏掉 class —— shouldSkip 认 class，采集照样被跳过。
+      el.removeAttribute("data-tp-translated");
+      if (el.classList) el.classList.remove("notranslate");
+      // class/style 按翻译前快照还原，避免留下 -webkit-line-clamp:unset 这类残留。
+      // 空字符串等同于「原本没有」：Chrome 里把 style 属性清空后会返回 ""，
+      // 再 setAttribute("style", "") 就会在 HTML 里留下一个多余的空壳属性。
+      const saved = this.savedAttrs;
+      if (saved) {
+        for (const name of ["class", "style"]) {
+          const value = saved[name];
+          if (value === null || value === undefined || value === "") el.removeAttribute(name);
+          else el.setAttribute(name, value);
+        }
+        this.savedAttrs = null;
+        // 保险：某些浏览器在 removeAttribute 之后再访问 el.style 会把空 style 建回来
+        if (el.getAttribute("style") === "") el.removeAttribute("style");
+      }
+      this.originalHtml = null;
+      this.appliedText = null;
+      this.translated = false;
     }
 
     /**

@@ -551,9 +551,6 @@ try {
     if (!captured.includes("updated by framework")) {
       throw new Error(`文本变化未被采集: ${captured}`);
     }
-    // 打印实际状态，供恢复断言定位差异
-    const live = await evaluate(page, `document.getElementById("dynamic").outerHTML`);
-    console.log("  动态元素实际状态:", live);
   });
 
   console.log("\n[3] 恢复");

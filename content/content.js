@@ -43,6 +43,84 @@
   /** 自动翻译前的等待，等首屏内容稳定。 */
   const AUTO_TRANSLATE_DELAY_MS = 800;
 
+  /**
+   * 单个单元送翻的字符上限。
+   *
+   * 超过就按句子切成多片分别翻、按序拼回——Google 批量端点能吞长文本，
+   * 但 MyMemory（450）和 Lingva（600）不能，长段落落在降级链上会整段失败。
+   * 1200 是权衡：小于大多数引擎的硬上限，又不会把段落切得过碎影响上下文。
+   */
+  const MAX_UNIT_CHARS = 1200;
+
+  /** 占位符 token：<0>…</0> 成对，或 <0/> 自闭合。 */
+  const PLACEHOLDER_TOKEN = /<(\d+)(\/)?>|<\/(\d+)>/g;
+
+  /**
+   * 把各片译文拼回整段。
+   *
+   * 中文、日文这类不用空格分词的语言直接相连；
+   * 拉丁字母语言之间补一个空格，防止 `sentence.Next` 这种粘连。
+   * @param {string[]} slices 按序译文片段
+   * @return {string} 拼接结果
+   */
+  function joinSlices(slices) {
+    const CJK = /^[\u3000-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+    let out = "";
+    for (const slice of slices) {
+      if (!slice) continue;
+      if (!out) out = slice;
+      else if (CJK.test(slice) || CJK.test(out.slice(-1))) out += slice;
+      else out += " " + slice;
+    }
+    return out;
+  }
+
+  /**
+   * 把长文本切成不超过 maxChars 的片，且**绝不切开占位符**。
+   *
+   * 占位符是给引擎的结构标记，`<0>` 和 `</0>` 分到两片里，
+   * 引擎会各自当成残片丢掉，译文回来校验必然失败。
+   * 所以切点只在「不在任何 <n>…</n> 内部」的句子边界上。
+   * @param {string} text 待切分文本
+   * @param {number} maxChars 单片上限
+   * @return {string[]} 片段（拼接后与原文等价，只多了连接空格）
+   */
+  function splitForEngine(text, maxChars) {
+    if (!text || text.length <= maxChars) return text ? [text] : [];
+
+    const sentences = text.split(/(?<=[.!?。！？；;])\s*/);
+    const parts = [];
+    let current = "";
+    let depth = 0;
+
+    for (const sentence of sentences) {
+      // 只有不在占位符内部时，才允许在这里断开
+      const safeToBreak = depth === 0;
+      if (safeToBreak && current && current.length + sentence.length + 1 > maxChars) {
+        parts.push(current);
+        current = sentence;
+      } else {
+        current = current ? `${current} ${sentence}` : sentence;
+      }
+
+      PLACEHOLDER_TOKEN.lastIndex = 0;
+      for (const m of sentence.matchAll(PLACEHOLDER_TOKEN)) {
+        if (m[3] !== undefined) depth = Math.max(0, depth - 1);
+        else if (m[2] === undefined) depth++;
+      }
+    }
+    if (current) parts.push(current);
+
+    // 兜底：某个 <n>…</n> 自身就超过上限，说明里面是一大段无标点长文本。
+    // 这时按硬长度切，残片里的占位符会在合并阶段补回，总比整段失败好。
+    return parts.flatMap(part => {
+      if (part.length <= maxChars) return [part];
+      const out = [];
+      for (let i = 0; i < part.length; i += maxChars) out.push(part.slice(i, i + maxChars));
+      return out;
+    });
+  }
+
   const controller = {
     /** @type {'idle'|'translating'|'translated'} */
     state: "idle",
@@ -342,7 +420,9 @@
           const unit = batch[index];
           if (!unit || !result) return;
           // 端侧返回整段译文：只写一次，避免多文本节点重复
-          if (unit.applyWholeText(result.text)) applied++;
+          if (unit.applyWholeText(result.text)) {
+            applied++;
+          }
         });
         this.showIndicator("翻译中… " + applied + "/" + units.length, true);
       }
@@ -397,11 +477,21 @@
           // 每轮重排：用户滚到哪，哪里的内容就先翻
           pending.sort((a, b) => rank(a) - rank(b) || order.get(a) - order.get(b));
           const batch = pending.splice(0, UNIT_BATCH_SIZE);
-          const texts = batch.map(unit => unit.text);
+
+          // 长单元切成多片再送：单条 3000 字的长段落直接发给 MyMemory（上限 450）
+          // 必然失败，降级链一路走到最后，用户看到「一直失败」。
+          // 切分感知占位符，绝不把 <0>…</0> 拆到两片里。
+          const requests = [];
+          const plan = batch.map(unit => {
+            const parts = splitForEngine(unit.text, MAX_UNIT_CHARS);
+            const start = requests.length;
+            requests.push(...parts);
+            return { unit, start, count: parts.length };
+          });
 
           const response = await sendMessage({
             action: "translateBatch",
-            texts: texts,
+            texts: requests,
             targetLanguage: target,
           });
 
@@ -416,10 +506,20 @@
           }
 
           const results = response.results || [];
+          const whole = [];
           const fallback = [];
-          results.forEach((result, index) => {
-            const unit = batch[index];
-            if (!unit || !result) return;
+          plan.forEach(item => {
+            const unit = item.unit;
+            // 把该单元的各片译文按序拼回一条：分片只是为了绕过单条上限，
+            // 还原阶段仍按「一个单元一份译文」处理，占位符校验照旧。
+            const slices = [];
+            for (let k = 0; k < item.count; k++) {
+              const piece = results[item.start + k];
+              if (!piece || typeof piece.text !== "string") break;
+              slices.push(piece.text);
+            }
+            if (slices.length !== item.count) return;
+            const result = { text: joinSlices(slices) };
             // brace 模式优先原子还原；失败再回落 tag 严格还原
             if (unit.braceMap && unit.braceMap.size > 0 && unit.applyBrace(result.text)) {
               applied++;
@@ -429,11 +529,43 @@
               applied++;
               return;
             }
+            // 分片拼回来校验不过，说明切点落在占位符内部（占位符里塞了超长文本，
+            // 数学上无法避免）。这时先重试一次「整段原样送翻」：Google 这类端点
+            // 能吞下几千字符，整段送往往一次就过，比降级纯文本保留更多结构。
+            if (item.count > 1) {
+              whole.push(unit);
+              return;
+            }
             // 占位符被引擎吞掉/破坏：改用「整段纯文本」重发一次，
             // 拿到整段译文后只写进第一个文本节点，其余清空——
             // 这样既保住标签与样式，也不会把同一段话重复贴 N 遍。
             if (unit.plainText) fallback.push({ unit, text: unit.plainText });
           });
+
+          // 分片失败的长单元：整段原样重发一次
+          if (whole.length > 0) {
+            try {
+              const retry = await sendMessage({
+                action: "translateBatch",
+                texts: whole.map(unit => unit.text),
+                targetLanguage: target,
+              });
+              if (retry && retry.ok) {
+                retry.results.forEach((result, index) => {
+                  const unit = whole[index];
+                  if (unit && result && unit.apply(result.text)) {
+                    applied++;
+                  }
+                });
+              }
+            } catch {
+              // 整段也不行，交给下面的纯文本降级
+            }
+            // 整段重发仍没翻译成功的，退回纯文本降级
+            for (const unit of whole) {
+              if (!unit.translated && unit.plainText) fallback.push({ unit, text: unit.plainText });
+            }
+          }
 
           if (fallback.length > 0) {
             try {
@@ -446,7 +578,9 @@
                 (retry.results || []).forEach((result, index) => {
                   const item = fallback[index];
                   if (!item || !result) return;
-                  if (item.unit.applyWholeText(result.text)) applied++;
+                  if (item.unit.applyWholeText(result.text)) {
+                    applied++;
+                  }
                 });
               }
             } catch {
@@ -509,9 +643,32 @@
       const settings = await this.loadSettings();
       if (!settings) return;
 
-      const fresh = [];
+      // 同一批几百条记录里，同一个根节点会被重复 push，
+      // 去重既省采集开销，也避免把同一段文本排进两次队列。
+      const uniqueRoots = [];
+      const seenRoots = new Set();
       for (const root of roots) {
-        if (!root || root.nodeType !== 1) continue;
+        if (!root || root.nodeType !== 1 || seenRoots.has(root)) continue;
+        seenRoots.add(root);
+        uniqueRoots.push(root);
+      }
+
+      // 已被我们接管、又被框架改写过原文的元素：旧单元已经失效
+      // （它保存的译文和当前 DOM 对不上，restore 时会因为指纹不符自行放弃），
+      // 留在 units 里只会让数组无限膨胀。先摘掉，再用新内容重新立单元。
+      const takenElements = new Set(this.units.map(unit => unit.element).filter(Boolean));
+
+      // 元素带着 data-tp-translated，但文本已经被框架换掉了：
+      // 标记过期，旧单元保存的译文与当前 DOM 对不上。
+      // 不清掉标记的话，DOM.collectUnits 会把整个元素当「已是译文」跳过，
+      // 结果就是 SPA 重渲染后这块内容永远不再翻译。
+      for (const unit of this.units) {
+        if (unit.isStale && unit.isStale()) unit.release();
+      }
+
+      const fresh = [];
+      const freshElements = new Set();
+      for (const root of uniqueRoots) {
         // 已翻译容器里新插入的内容不能当独立单元重翻：
         // 否则 `<p data-tp-translated>译文<span>新增</span></p>` 会把
         // 已翻译的父元素和新节点混在一起二次送翻，译文叠成两层。
@@ -520,12 +677,26 @@
         const found = DOM.collectUnits(root, this.placeholderMode);
         for (const unit of found) {
           if (unit.translated) continue;
+          // 最近一轮已经给这个元素立过单元：框架反复触发 observer 时
+          // 不重复排队，防止同一段文本被翻两遍、译文中途闪回原文。
+          if (freshElements.has(unit.element)) continue;
           // 整段已是目标语言（中文页面里的中文段落）不再送翻
           if (this.filterAlreadyTarget([unit], settings.targetLanguage).length === 0) continue;
+          freshElements.add(unit.element);
           fresh.push(unit);
         }
       }
       if (fresh.length === 0) return;
+
+      // 失效旧单元下线：元素已被重新立单元，旧对象不再参与 restore
+      if (takenElements.size > 0) {
+        const revived = new Set(fresh.map(unit => unit.element));
+        this.units = this.units.filter(unit => {
+          if (!revived.has(unit.element)) return true;
+          if (unit.release) unit.release();
+          return false;
+        });
+      }
 
       this.units.push(...fresh);
       if (OFFLINE && OFFLINE.supported) {
@@ -539,26 +710,59 @@
     },
 
     /**
+     * 这个元素最近是不是被我们自己写过。
+     *
+     * 只看元素自己（不看祖先）：我们写的是单元元素本身的文本，
+     * 而框架改写时打的也是同一个元素，必须靠时间区分而不是靠标记。
+     * @param {?Element} element 元素
+     * @return {boolean} true 表示是自身写入的残影
+     */
+    writtenRecently(element) {
+      if (!element) return false;
+      // 我们写的译文原样还在 → 这条记录是「自己写进去」的回声，必须忽略，
+      // 否则中文被当成原文再翻一遍，产出「译[译[译[...]]]」套娃。
+      // 文本已经变了 → 是框架覆盖的，交给 translateNewContent 处理。
+      //
+      // 不能用纯时间窗口：MutationObserver 记录在微任务里送达，
+      // 时机不受我们控制；也不能只看标记，框架改写时标记还挂着。
+      const unit = this.units.find(item => item.element === element);
+      if (!unit) return false;
+      return !(unit.isStale && unit.isStale());
+    },
+
+    /**
      * 启动动态内容观察。
      */
     attachObserver() {
       if (this.observer) return;
       const self = this;
       this.observer = new MutationObserver(records => {
-        if (self.observerSuppressed) return;
         const roots = [];
         for (const record of records) {
           // 1) 新增节点：按元素收集根
           for (const node of record.addedNodes) {
-            if (node.nodeType === 1) roots.push(/** @type {Element} */ (node));
+            if (node.nodeType === 1) {
+              roots.push(/** @type {Element} */ (node));
+            } else if (node.nodeType === 3 && node.parentElement) {
+              // React/Vue 用 textContent 赋值时，节点被整体替换成新的文本节点：
+              // 新节点是 Text 不是 Element，只收 Element 会把这次更新整个漏掉。
+              //
+              // 但要排除自己的回声：我们写入译文同样会替换文本节点，
+              // 再采一次会把中文当原文翻译，翻成「译[译[译[...]]]」套娃。
+              //
+              // 不能用 data-tp-translated 判断：框架改写文本时标记仍然挂着，
+              // 那样会把真正的更新一起吞掉。改看「这本元素是不是刚被自己写过」。
+              const parent = node.parentElement;
+              if (!self.writtenRecently(parent)) roots.push(parent);
+            }
           }
           // 2) 文本节点变化：React/Vue 只改 textContent 时**不会**产生 childList 记录，
           //    只监听 childList 等于「动态页面的文本永远不翻」（实测 GitHub 的
           //    实时刷新、SPA 路由切换后的标题全部漏翻）。取最近的可翻译祖先作为根。
           if (record.type === "characterData" && record.target && record.target.nodeType === 3) {
             const parent = record.target.parentElement;
-            // 已翻译容器里的文本变化是引擎自己写入的回声，不能当新内容
-            if (parent && !parent.closest("[data-tp-translated]")) roots.push(parent);
+            // 引擎自己写入的回声不算新内容
+            if (parent && !self.writtenRecently(parent)) roots.push(parent);
           }
         }
         if (roots.length === 0) return;

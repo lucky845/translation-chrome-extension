@@ -324,6 +324,86 @@ await test("翻译完成后新增的段落会被增量翻译", async () => {
   );
 });
 
+console.log("\n[P2-6] 长段落分片");
+await test("超长单元被切成多片发送，且占位符不被切开", async () => {
+  const longText = "First sentence here. ".repeat(150);
+  const { sent, dispatch } = await loadContent(`<p id="p">${longText}</p>`);
+  await dispatch({ action: "translatePage" });
+  const batch = sent.find(m => m.action === "translateBatch");
+  assert.ok(batch, "没有发出 translateBatch");
+  assert.ok(batch.texts.length >= 2, `超长段落应被切分，实际 ${batch.texts.length} 条`);
+  for (const piece of batch.texts) {
+    assert.ok(piece.length <= 1200, `单片过长: ${piece.length}`);
+  }
+});
+
+await test("分片译文按序拼回，整段内容不丢不重", async () => {
+  const longText = "First sentence here. ".repeat(150);
+  const { window, dispatch } = await loadContent(`<p id="p">${longText}</p>`);
+  await dispatch({ action: "translatePage" });
+  const text = window.document.getElementById("p").textContent;
+  const count = (text.match(/First sentence here\./g) || []).length;
+  assert.equal(count, 150, `片段数不对: ${count}`);
+});
+
+await test("占位符跨度长的单元切分后仍能正确还原", async () => {
+  const html = "Intro sentence. ".repeat(80) + "<a href='/x'>link text here</a>" + "Tail sentence. ".repeat(80);
+  const { window, dispatch } = await loadContent(`<p id="p">${html}</p>`);
+  await dispatch({ action: "translatePage" });
+  const p = window.document.getElementById("p");
+  assert.ok(p.querySelector("a"), "<a> 在分片还原后丢失");
+  assert.equal(p.querySelector("a").getAttribute("href"), "/x", "href 丢失");
+});
+
+console.log("\n[P2-8] SPA 重渲染");
+await test("框架覆盖译文后重新翻译，不会把同一段翻两次", async () => {
+  const { window, sent, dispatch } = await loadContent('<p id="p">Hello world.</p>');
+  await dispatch({ action: "translatePage" });
+  const p = window.document.getElementById("p");
+  assert.equal(p.textContent, "译[Hello world.]");
+
+  // 模拟 React 重新渲染：写回英文原文
+  p.textContent = "Hello again from React.";
+  await new Promise(resolve => setTimeout(resolve, 700));
+
+  assert.equal(p.textContent, "译[Hello again from React.]", "新内容应被翻译");
+  // 第二次只发一条，且发的是新文本；不应该把旧文本再发一遍
+  const batches = sent.filter(m => m.action === "translateBatch");
+  const lastBatch = batches[batches.length - 1];
+  assert.equal(lastBatch.texts.length, 1, `只应重发 1 条，实际 ${lastBatch.texts.join("|")}`);
+  assert.ok(lastBatch.texts[0].includes("React"), "重发的应是新文本");
+});
+
+await test("同一批 observer 记录里的重复根节点只采集一次", async () => {
+  const { window, dispatch } = await loadContent('<div id="w"><p id="p">Hello.</p></div>');
+  await dispatch({ action: "translatePage" });
+  const w = window.document.getElementById("w");
+  // 一次性插入多个子节点，产生多条记录
+  for (let i = 0; i < 3; i++) {
+    const el = window.document.createElement("p");
+    el.textContent = `New paragraph ${i}.`;
+    w.appendChild(el);
+  }
+  await new Promise(resolve => setTimeout(resolve, 700));
+  const texts = Array.from(w.querySelectorAll("p"))
+    .map(el => el.textContent)
+    .filter(t => t.startsWith("译["));
+  assert.equal(texts.length, 4, `应翻 4 段（原 1 + 新增 3），实际 ${texts.length}: ${texts.join("|")}`);
+});
+
+await test("被框架覆盖过译文再恢复，不会写回过期原文", async () => {
+  const { window, dispatch } = await loadContent('<p id="p">Hello world.</p>');
+  await dispatch({ action: "translatePage" });
+  const p = window.document.getElementById("p");
+  p.textContent = "Hello again from React.";
+  await new Promise(resolve => setTimeout(resolve, 700));
+  assert.equal(p.textContent, "译[Hello again from React.]");
+
+  await dispatch({ action: "restorePage" });
+  // 框架写过的新内容不能被旧单元的过期原文覆盖
+  assert.equal(p.textContent, "Hello again from React.", `恢复后残留: ${p.textContent}`);
+});
+
 const failed = results.filter(result => !result.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);
