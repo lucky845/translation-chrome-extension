@@ -808,3 +808,46 @@ await test("Google：GET 分块按编码后的 URL 长度切分", async () => {
     assert(request.url.length <= 6600, `URL 长度 ${request.url.length} 超过安全上限`);
   }
 });
+
+await test("降级链：首选失败后按最近成功排序，而不是死守固定链序", async () => {
+  // 旧实现 `lastSuccess.get(b) - lastSuccess.get(a)` 在未成功过的引擎上是
+  // undefined - number = NaN，Array.sort 把 NaN 当作 0（保持原序）——
+  // 于是「最近成功优先」整段**从未生效过**，永远按固定链序走。
+  //
+  // 坑：这条用例曾在模块级状态被前序用例污染时「假通过」（lastSuccess 里
+  // 已有 lingva 记录），所以改为在**独立子进程**里跑，状态完全干净。
+  const { execFileSync } = await import("node:child_process");
+  const probe = `
+    globalThis.chrome = {
+      storage: { sync: { get: async d => ({ ...d }), set: async () => {} }, onChanged: { addListener: () => {} } },
+    };
+    const order = [];
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes("googleapis")) { order.push("google"); return new Response("rate", { status: 429 }); }
+      if (url.includes("mymemory")) {
+        order.push("mymemory");
+        return new Response(JSON.stringify({ responseData: { translatedText: "你好" }, responseStatus: 200 }), { status: 200 });
+      }
+      order.push("lingva"); return new Response(JSON.stringify({ translation: "你好" }), { status: 200 });
+    };
+    const { translateTexts, resetEngineHealth, clearCache } = await import("./background/translator.js");
+    clearCache(); resetEngineHealth();
+    await translateTexts(["warmup-unique"], "en", "zh-CN", "lingva");
+    order.length = 0;
+    await translateTexts(["second-unique"], "en", "zh-CN", "google");
+    process.stdout.write(JSON.stringify(order));
+    process.exit(0);
+  `;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e", probe], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  const order = JSON.parse(output.trim() || "[]");
+  assert.strictEqual(order[0], "google", `首选必须仍先试 google，实际: ${order.join(" → ")}`);
+  assert.strictEqual(
+    order[1],
+    "lingva",
+    `google 失败后应优先最近成功过的 lingva（链序里排在最后），实际先试了 ${order[1]}（顺序: ${order.join(" → ")}）`
+  );
+});

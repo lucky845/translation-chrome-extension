@@ -224,6 +224,9 @@ function clearCooldown(name) {
  */
 export function resetEngineHealth() {
   cooldowns.clear();
+  // 用户改设置后重置健康状态，连带清掉「最近成功过」的历史，
+  // 否则刚清完冷却期，排序仍带着上一轮的偏好。
+  lastSuccess.clear();
 }
 
 /**
@@ -270,10 +273,18 @@ async function runWithFallback(texts, from, to, engineName) {
     else ready.push(name);
   }
 
-  // 把最近成功过的引擎往前排：免费端点轮着限流，
-  // 死守首选引擎只会每批先撞一次 429、多等一次超时。
-  // 谁上一次成功过，这一次就用谁。
-  ready.sort((a, b) => lastSuccess.get(b) - lastSuccess.get(a));
+  // 首选引擎永远排第一：用户显式选了 Google 就先用 Google，
+  // 不能被「MyMemory 最近成功过」顶替——那是替用户改主意。
+  ready.sort((a, b) => {
+    if (a === engineName) return -1;
+    if (b === engineName) return 1;
+    // 其余引擎按「最近成功过」排序：免费端点轮着限流，
+    // 谁上一次成功过这一次先试谁，少撞一次 429。
+    // 用 ?? -Infinity 而不是直接相减：未成功过的引擎是 undefined，
+    // undefined - number = NaN，而 sort 把 NaN 当 0 保持原序——
+    // 那是碰巧对，换个实现就崩。
+    return (lastSuccess.get(b) ?? -Infinity) - (lastSuccess.get(a) ?? -Infinity);
+  });
 
   /** @type {string[]} */
   const failures = [];

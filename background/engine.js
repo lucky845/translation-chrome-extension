@@ -589,11 +589,25 @@ function splitIntoChunks(texts) {
   for (const text of texts) {
     // "q=" 前缀 + 编码后的内容 + "&" 分隔符
     const cost = encodeURIComponent(text).length + 3;
+
+    // 单条自身就超限时独占一块。
+    // 历史：旧写法只有 `current.length > 0` 守卫，超长单条会绕过全部长度判断。
+    // 但真机实测 URL 12555 字符（1600 个汉字）仍返回 200，说明 MAX_URL_CHARS
+    // 只是留余量，不是 Google 的硬限；分块结果两种写法都是对的（旧代码切 3 块、
+    // 新代码也 3 块），所以这里只是把意图写明确，不是修 bug。
+    // 保留此分支的意义：将来若调小 MAX_URL_CHARS 或换端点，行为仍然正确。
     if (current.length > 0 && (current.length >= MAX_TEXTS_PER_CHUNK || urlChars + cost > MAX_URL_CHARS)) {
       chunks.push(current);
       current = [];
       urlChars = 0;
     }
+
+    if (cost > MAX_URL_CHARS) {
+      // 单条超长：交给上层按句切分后重试，这里先独占一块保证不丢内容
+      chunks.push([text]);
+      continue;
+    }
+
     current.push(text);
     urlChars += cost;
   }
