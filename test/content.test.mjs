@@ -492,6 +492,33 @@ await test("滚动翻译不会卡死：远端段落最终都能翻到", async ()
   assert.equal(result.count, 200, `200 段应全部翻完，实际 ${result.count}`);
 });
 
+await test("滚动到远端后，那里的内容插到队首先翻", async () => {
+  const paras = Array.from({ length: 300 }, (_, i) => `<p id="p${i}">Paragraph ${i} content.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "on" } });
+  const { window } = env;
+  const paras2 = Array.from(window.document.querySelectorAll("p"));
+  const tops = new Map(paras2.map((p, i) => [p, i * 100]));
+  let scrollY = 0;
+  Object.defineProperty(window, "innerHeight", { value: 900, configurable: true });
+  window.HTMLElement.prototype.getBoundingClientRect = function () {
+    const top = (tops.has(this) ? tops.get(this) : 0) - scrollY;
+    return { top, bottom: top + 100, left: 0, right: 800, width: 800, height: 100 };
+  };
+
+  const promise = env.dispatch({ action: "translatePage" });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  // 用户滚到第 200 段附近
+  scrollY = 20000;
+  window.dispatchEvent(new window.Event("scroll"));
+
+  const result = await promise;
+  assert.equal(result.count, 300, `应翻完 300 段，实际 ${result.count}`);
+  const batches = env.sent.filter(message => message.action === "translateBatch");
+  const late = batches.slice(1).flatMap(batch => batch.texts);
+  const deep = late.filter(text => /Paragraph (1[89]\d|2\d\d) /.test(text));
+  assert.ok(deep.length > 0, `滚动到远端后应补翻那里的内容，实际补翻 ${late.length} 条且没有远端段落`);
+});
+
 const failed = results.filter(result => !result.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);
