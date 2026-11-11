@@ -6,10 +6,10 @@
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue)
+![Version](https://img.shields.io/badge/version-1.1.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
-![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 [![Edge Add-ons](https://img.shields.io/badge/Get_it_from-Microsoft-0d6cb6?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan)
 
@@ -199,8 +199,46 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 
 - 仅注入主框架（`all_frames: false`），iframe 内内容由其自身页面负责
 - `pre`、`code`、表单控件、`contenteditable` 区域不翻译（设计如此）
+- `display:none` 与 `aria-hidden="true"` 的内容不翻译：翻了看不见，还会把装饰性字面量翻乱；弹层打开时会作为新节点重新进入增量队列
 - Google 免费端点无官方 SLA，极端限流时返回明确错误而不是伪造结果
 - 自定义接口按**逐条串行**发送（不同服务批量格式差异太大，强行批量只会更慢），整页翻译会比 Google 慢
+
+## 📝 更新日志
+
+### v1.1.2 — 文字提取与引擎稳定性
+
+**翻译准确性**
+
+- 修复 `<a>` 等内联元素里的文字在降级路径下丢失
+- 修复 `Array<T>` 这类带尖括号的代码片段被 HTML 解析吞掉
+- 修复 ruby 注音（`<ruby>` 的 `<rt>`）被拼进正文
+- 修复 `display:block` 的 `<strong>` 被误当内联、与正文并成一句
+- 修复 `display:inline-block` 容器被整块当成行内占位符，里面的段落永远翻不到
+- 修复日语页面因汉字比例误判而被当成「已是中文」整页不翻
+- 补齐 `title` / `alt` / `aria-label` / `placeholder` 四类属性文本的翻译
+
+**稳定性**
+
+- 恢复原文时不再回滚页面在翻译期间的新内容（框架更新不再被覆盖）
+- 长段落按句切分送翻，MyMemory（450 字符）与 Lingva（600 字符）不再因超长整段失败
+- 框架重渲染后不再出现「译[译[译[…]]]」套娃翻译
+- SPA 路由切换后失效单元会被回收，长会话不再持续吃内存
+- 修复引擎熔断在冷却期内被反复失败续期、导致永远不恢复的问题
+
+**性能**
+
+- 设置读取不再同步探测三个引擎（曾阻塞首屏 48 秒）
+- 动态内容只翻译真正变化的部分
+
+### v1.1.1
+
+- 移除流水线里的 Edge 商店自动提交，改为手动在 Partner Center 提交
+
+### v1.1.0
+
+- `{{n}}` 双占位符模式（自定义引擎）
+- 端侧翻译开关、译文样式（下划线 / 高亮）
+- Google 批量失败时的单条兜底端点
 
 ## 📄 License
 
