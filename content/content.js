@@ -546,14 +546,40 @@
       let deferred = [];
       const idleFor = () => Date.now() - lastScrollAt;
 
+      /**
+       * 为「等滚动」设绝对上限。
+       *
+       * 用户可能一直在滚动（sticky 头、懒加载图片、触摸惯性、视频页面），
+       * 光看 scroll 事件就永远等不到空闲。没有这个上限，远端单元会一直挂在
+       * deferred 里：页面明明翻完了，弹窗却永远显示「翻译中…172/172」，
+       * 「显示原文」也点不动（state 卡在 translating）。
+       * 到点就强制 draining，把剩下的翻完——滚动继续也不会再拦。
+       */
+      // 2 秒而不是更久：用户滚动时视口内容已经翻了，远端他看不到，
+      // 早补晚补无所谓——但「翻译中」这个状态不该挂太久，那正是用户
+      // 抱怨的「翻完一直显示翻译中」。
+      const LAZY_HARD_LIMIT_MS = 2000;
+      const lazyStartedAt = Date.now();
+
       try {
-        while (this.state !== "idle" && !this.restoring) {
+        // 退出条件必须包含「队列真的空了」。
+        // 旧实现写的是 while (pending.length > 0)，本身就有这个出口；
+        // 改成只判 state 之后，一旦用户持续滚动（sticky 头、懒加载图片、
+        // 页面本身在动），idleFor() 永远重置，pending 空、deferred 非空，
+        // 循环就永远不退出 —— 表现是页面已经全部翻完，弹窗却一直显示
+        // 「翻译中…172/172」，「显示原文」按钮也点不动（state 还是 translating）。
+        while ((pending.length > 0 || deferred.length > 0) && this.state !== "idle" && !this.restoring) {
           if (pending.length === 0) {
             // 视口内暂时没有待翻内容：等用户滚动或等空闲，再唤醒远端单元。
             // 注意 pending 已经没有可翻的了，空转只会烧 CPU，
             // 所以这里要么等到有新内容，要么等到 idle 足够久把远端拉回来。
             if (deferred.length === 0) break;
-            if (scrolling || idleFor() < LAZY_IDLE_MS) {
+            // 等用户停手：正在滚动，或者刚停不到 LAZY_IDLE_MS。
+            // 硬上限是安全阀——用户可能一直在滚（sticky 头、懒加载图片、
+            // 触摸惯性），光靠 scroll 事件永远等不到空闲。到点强制 draining，
+            // 否则远端单元会永远挂在 deferred 里，弹窗一直显示「翻译中」。
+            const hitHardLimit = Date.now() - lazyStartedAt > LAZY_HARD_LIMIT_MS;
+            if (!hitHardLimit && (scrolling || idleFor() < LAZY_IDLE_MS)) {
               await delay(SCROLL_DEBOUNCE_MS);
               // 重新结算：可能用户已经滚到远端区域了
               const back = [];

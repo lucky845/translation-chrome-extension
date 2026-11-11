@@ -492,6 +492,32 @@ await test("滚动翻译不会卡死：远端段落最终都能翻到", async ()
   assert.equal(result.count, 200, `200 段应全部翻完，实际 ${result.count}`);
 });
 
+await test("用户持续滚动时，翻译状态必须能收尾（不能一直卡在 translating）", async () => {
+  // 用户报告的真实现象：GitHub 长页面翻译完，右下角一直显示「翻译中…172/172」，
+  // 「显示原文」点不动。根因是持续滚动让 idleFor() 永远被重置，
+  // 远端单元挂在 deferred 里，循环永远等不到空闲。
+  const paras = Array.from({ length: 172 }, (_, i) => `<p>Paragraph ${i} content.</p>`).join("");
+  const env = await loadContent(paras, { settings: { lazyTranslate: "on" } });
+  fakeLayout(env, 172, 30, 900);
+
+  // 模拟 sticky 头 / 懒加载图片：滚动事件不停
+  const scroller = setInterval(() => env.window.dispatchEvent(new env.window.Event("scroll")), 100);
+  let result;
+  try {
+    result = await Promise.race([
+      env.dispatch({ action: "translatePage" }),
+      new Promise(resolve => setTimeout(() => resolve({ success: false, error: "超时：状态卡在 translating" }), 6000)),
+    ]);
+  } finally {
+    clearInterval(scroller);
+  }
+
+  assert.equal(result.success, true, `持续滚动下也必须收尾，实际: ${result.error || ""}`);
+  assert.equal(result.count, 172, `应全部翻完，实际 ${result.count}`);
+  const status = await env.dispatch({ action: "getStatus" });
+  assert.equal(status.state, "translated", `状态必须是 translated，实际 ${status.state}`);
+});
+
 await test("滚动到远端后，那里的内容插到队首先翻", async () => {
   const paras = Array.from({ length: 300 }, (_, i) => `<p id="p${i}">Paragraph ${i} content.</p>`).join("");
   const env = await loadContent(paras, { settings: { lazyTranslate: "on" } });
