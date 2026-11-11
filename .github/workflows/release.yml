@@ -17,7 +17,11 @@ jobs:
             - name: Build and package the extension
               id: package
               run: |
-                  zip -r extension-${{ github.ref_name }}.zip * -x .git/ .github/ .DS_Store .AppleDouble .LSOverride ._* .DocumentRevisions-V100 .fseventsd .Spotlight-V100 .TemporaryItems .Trashes .VolumeIcon.icns .com.apple.timemachine.donotpresent .AppleDB .AppleDesktop .Network\ Trash\ Folder .apdisk Thumbs.db ehthumbs.db .idea/ .vscode/ *.swp *.swo node_modules/ dist/ build/ coverage/ package-lock.json yarn.lock *.log npm-debug.log* yarn-debug.log*
+                  # 只打包扩展运行时需要的目录与文件，避免 test/、node_modules/、
+                  # 开发文档混进商店包（Edge 提交时会带着它们一起过审）。
+                  zip -r extension-${{ github.ref_name }}.zip \
+                    manifest.json _locales icons background content options popup \
+                    -x '*.DS_Store' -x '*__tests__*' -x '*.map' -x '*.log'
                   echo "zip_name=extension-${{ github.ref_name }}.zip" >> $GITHUB_OUTPUT
 
             - name: Create Release and Upload Asset
