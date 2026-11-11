@@ -6,10 +6,10 @@
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.2-blue)
+![Version](https://img.shields.io/badge/version-1.1.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
-![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 [![Edge Add-ons](https://img.shields.io/badge/Get_it_from-Microsoft-0d6cb6?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan)
 
@@ -204,6 +204,30 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 - 自定义接口按**逐条串行**发送（不同服务批量格式差异太大，强行批量只会更慢），整页翻译会比 Google 慢
 
 ## 📝 更新日志
+
+### v1.1.3 — 翻译真正跑起来了
+
+**关键修复：Google 端点改走 GET**
+
+真机实测（Chrome for Testing，扩展 service worker 上下文）：Google 的
+`translate_a/t` 对 POST 的预检不返回 CORS 头，浏览器在请求真正发出前就判
+`Failed to fetch`；同一端点改 GET 一次 60 条正常返回。旧代码把 `Failed to fetch`
+当成可重试的网络错误，于是一路重试 → 降级 → 再重试，最后报「所有引擎失败」，
+而请求其实一次都没发出去。
+
+**翻译体验**
+
+- 新增滚动翻译（滚到哪翻到哪），设置页可关闭
+- 失败的翻译批次不再被静默丢弃：隔 3 秒统一重试一轮，仍失败则如实提示「有 N 段未翻译」
+- 连续 3 批被拒即停止，不再在限流上白等（真机实测一次翻译从 103 秒降到 42 秒）
+- 429 限流跳过退避重试与逐条兜底，直接交给降级链
+- 持续滚动时状态不会再卡在「翻译中」
+
+**引擎**
+
+- 降级链的「最近成功优先」排序此前从未生效（`undefined - number` 得 `NaN`，
+  `sort` 把 `NaN` 当 0），现在会真正把刚成功过的引擎提前
+- 用户首选的引擎始终排第一，不会被最近成功过的引擎顶替
 
 ### v1.1.2 — 文字提取与引擎稳定性
 
