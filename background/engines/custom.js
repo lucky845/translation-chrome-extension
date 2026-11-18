@@ -128,7 +128,9 @@ export const CUSTOM_PRESETS = {
     label: "通用（完全自定义）",
     hint: "自己填地址、请求模板与响应路径；响应是纯文本时把响应路径留空",
     url: "",
-    concurrency: 1,
+    // 4 与 DeepLX / LibreTranslate 预设一致：自建服务通常能承受；
+    // 若目标服务有限流，用户可换用对应预设或调低这里的值。
+    concurrency: 4,
     method: "GET",
     headers: "{}",
     body: "",
@@ -304,15 +306,23 @@ export class CustomEngine extends BaseEngine {
     const filled = plans.map(segments => new Array(segments.length));
     let cursor = 0;
 
+    // 节流只在「串行」时才有意义：它拉开的是相邻请求的间隔。
+    // 并发 > 1 时天然就有多个请求同时在飞，再给每个 worker 加 120ms 的
+    // 固定 sleep 只会让整页翻译线性变慢——实测 600 段串行要 74 秒
+    // （600 × (120ms 节流 + 4ms 请求)），比大多数用户能忍的上限慢得多。
+    // 自建服务通常也不需要这种保守间隔（那是给公共免费接口防限流用的）。
+    const concurrency = Math.min(config.concurrency || 1, tasks.length);
+    const throttle = concurrency > 1 ? 0 : THROTTLE_MS;
+
     const worker = async () => {
       while (cursor < tasks.length) {
         const task = tasks[cursor++];
         filled[task.textIndex][task.segmentIndex] = await this.requestWithRetry(task.segment, fromLang, toLang, config);
-        if (cursor < tasks.length) await sleep(THROTTLE_MS);
+        if (throttle > 0 && cursor < tasks.length) await sleep(throttle);
       }
     };
 
-    const workers = Array.from({ length: Math.min(config.concurrency || 1, tasks.length) }, worker);
+    const workers = Array.from({ length: concurrency }, worker);
     await Promise.all(workers);
 
     return texts.map((text, textIndex) => {
