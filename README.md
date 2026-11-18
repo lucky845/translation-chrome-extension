@@ -6,7 +6,7 @@
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.4-blue)
+![Version](https://img.shields.io/badge/version-1.1.5-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
 ![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen)
@@ -206,6 +206,25 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
   不做请求合并）。对限流敏感的公共免费实例，请换用对应预设或把 `concurrency` 调回 1（此时会保留 120ms 节流间隔）
 
 ## 📝 更新日志
+
+### v1.1.5 — 自定义接口可用性
+
+v1.1.4 之后真机验证追加的两项修复。**如果你用自定义接口，这一版必须更新。**
+
+**性能**
+
+- 自定义接口整页翻译慢 80 倍：worker 在每个任务后固定 `sleep(120ms)`，且通用预设
+  `concurrency: 1`（纯串行），实测 600 段要 74 秒。现在节流只在串行路径生效，
+  并发预设不再被固定 sleep 拖累；通用预设并发 1 → 4（与 DeepLX / LibreTranslate 对齐）。
+  **实测 60 段从约 7.4 秒降到 91ms。** 串行路径仍保留节流，公共免费接口保护不受影响
+
+**修复**
+
+- 「测试连接」按钮永久卡在「测试中…」：`ensurePermission` 先 `await chrome.permissions.contains()`
+  再 `chrome.permissions.request()`，而 request 必须在用户手势的同步调用栈里发出——
+  先 await 就把手势消耗掉了。这是每个用户第一次配置自定义接口的必经路径，等于功能被完全阻断。
+  现在直接 request（已授权时立即 resolve 且不弹窗），并加 15 秒超时兜底：
+  弹窗被关掉或无弹窗环境给出明确错误，不再无声悬挂
 
 ### v1.1.4 — 最后一公里修复
 
