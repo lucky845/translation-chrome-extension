@@ -399,15 +399,10 @@ export class MyMemoryEngine extends BaseEngine {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
       try {
+        // 不设 User-Agent/Referer/Origin：它们是 fetch 的禁改头（forbidden header），
+        // 浏览器会静默丢弃，写了也不生效（白留误导性配置）。
         const response = await fetch(`${MyMemoryEngine.ENDPOINT}?${query.toString()}`, {
           method: "GET",
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            Accept: "application/json,text/plain,*/*",
-            Referer: "https://mymemory.translated.net/",
-            Origin: "https://mymemory.translated.net",
-          },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (!response.ok) {

@@ -8,7 +8,7 @@
  *   - 接线 chrome.commands 与 contextMenus。
  */
 
-import { getSettings, updateSettings } from "./settings.js";
+import { getSettings } from "./settings.js";
 import { translateTexts, clearCache, resetEngineHealth } from "./translator.js";
 import { CUSTOM_PRESETS, CUSTOM_PRESET_NAMES } from "./engines/custom.js";
 
@@ -70,19 +70,6 @@ const handlers = {
     // 探测属于界面展示信息，由 getEngineStatus 按需提供。
     const settings = await getSettings();
     return { ok: true, settings, engines: staticEngineAvailability(settings) };
-  },
-
-  /**
-   * 更新设置。
-   * @param {Object} message 消息
-   * @return {Promise<Object>} 新设置
-   */
-  async setSettings(message) {
-    const settings = await updateSettings(message.settings || {});
-    clearCache();
-    // 用户刚刚改过引擎/密钥：清掉熔断，让新配置立刻生效，不用等 30 秒冷却
-    resetEngineHealth();
-    return { ok: true, settings };
   },
 
   /**
@@ -226,6 +213,35 @@ async function engineAvailability(settings) {
   ]);
 
   return status;
+}
+
+// ---- 设置变更同步 ----
+
+// popup / options 直接写 chrome.storage.sync（不走任何消息），
+// settings.js 的监听只失效设置缓存；这里负责译文缓存与引擎熔断——
+// 否则换引擎/密钥后旧冷却与旧译文会继续生效，用户要等 30 秒或刷新页面。
+// 替代已删除的 setSettings handler（消息通道全仓无调用方，纯死代码）。
+if (chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    // 引擎相关字段变更才清理：目标语言/黑名单等不涉及译文缓存与熔断
+    const engineKeys = [
+      "engine",
+      "apiKey",
+      "customPreset",
+      "customUrl",
+      "customMethod",
+      "customHeaders",
+      "customBody",
+      "customResponsePath",
+      "customToken",
+      "customModel",
+    ];
+    if (!engineKeys.some(key => key in changes)) return;
+    clearCache();
+    // 刚改过引擎/密钥：清掉熔断，让新配置立刻生效，不用等 30 秒冷却
+    resetEngineHealth();
+  });
 }
 
 // ---- 快捷键 ----
