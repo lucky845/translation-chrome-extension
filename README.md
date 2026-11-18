@@ -6,7 +6,7 @@
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.3-blue)
+![Version](https://img.shields.io/badge/version-1.1.4-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
 ![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen)
@@ -193,7 +193,8 @@ node test/e2e.mjs     # 真实 Chrome E2E（macOS + 本机 Chrome）
 npm run lint
 ```
 
-E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`（有头模式）。
+E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`（有头模式）、
+`TP_E2E_NO_SANDBOX=1`（容器 / CI / 受限用户会话里 Chrome 自身沙箱无法初始化时开启）。
 
 ## ⚠️ 已知限制
 
@@ -204,6 +205,36 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 - 自定义接口按**逐条串行**发送（不同服务批量格式差异太大，强行批量只会更慢），整页翻译会比 Google 慢
 
 ## 📝 更新日志
+
+### v1.1.4 — 最后一公里修复
+
+**兼容性**
+
+- `minimum_chrome_version` 102 → **103**：`AbortSignal.timeout`（fetch 超时）是 Chrome 103 新增 API，
+  Chrome 102 上每个翻译请求直接 `TypeError`，翻译全灭
+
+**修复**
+
+- `title` / `alt` / `aria-label` / `placeholder` 属性文本翻译此前从未生效：批量翻译返回的是
+  `{text, detected}` 对象数组，旧实现按字符串判断导致全部落空，现在正确读取字段
+- 「译文样式」（下划线 / 高亮）此前从未生效：注入的 CSS 选择器带 `:not([data-tp-translated=""])`，
+  而标记写入的恰好是空值属性，每个已标记元素都被排除；选择器已对齐
+- 改动设置（引擎 / 密钥 / 样式 / 目标语言）现在**实时生效**：popup/options 直写 `chrome.storage.sync`，
+  但 `runtime.sendMessage` 不会投递给 content script——已改用 `storage.onChanged` 双端接线
+  （content 失效设置缓存并重注入样式；service worker 清译文缓存与引擎熔断），无需刷新页面
+- 端侧翻译预热语言对跟随用户设置，不再硬编码 `en→zh`（目标语言为其他语言时预热会打错模型）
+
+**真机验证追加修复（E2E 抓到的，jsdom 覆盖不到）**
+
+- 内联 `<img alt>` 的属性译文此前会丢：正文翻译用 `cloneNode` 重建内联元素，
+  属性若在之后写入就打在已脱离文档的原节点上，屏幕上仍是旧 `alt`；属性翻译已提前到正文翻译之前
+- 「显示原文」后 `alt` 还原不回去：单元恢复会重建节点，属性记录里的元素引用失效；
+  现在额外记录「标签名 + 文档序号」，还原时按此重新定位当前元素
+
+**清理**
+
+- 删除全仓无调用方的 `setSettings` 消息 handler 与 `settingsUpdated` 死分支
+- 移除 MyMemory 请求里的 `User-Agent` / `Referer` / `Origin` —— 这些是 fetch 禁改头，浏览器静默丢弃，写了也不生效
 
 ### v1.1.3 — 翻译真正跑起来了
 

@@ -1,6 +1,6 @@
 {
   "name": "translation-chrome-extension",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "A Chrome extension for translating web pages",
   "author": "lucky845 <lc1447545564@gmail.com>",
   "license": "MIT",
@@ -14,7 +14,7 @@
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node test/dom.test.mjs && node test/blacklist.test.mjs && node test/offline.test.mjs && node test/content.test.mjs && node test/options.test.mjs && node test/manifest.test.mjs",
+    "test": "node test/dom.test.mjs && node test/blacklist.test.mjs && node test/offline.test.mjs && node test/content.test.mjs && node test/options.test.mjs && node test/manifest.test.mjs && node test/service-worker.test.mjs",
     "test:engine": "node test/engine.test.mjs"
   },
   "devDependencies": {
