@@ -109,6 +109,18 @@ test("content scripts 不含 import/export 语句", () => {
   }
 });
 
+console.log("\n[3.5] API 版本地板");
+test("minimum_chrome_version 覆盖代码用到的全部新 API", () => {
+  // AbortSignal.timeout（engine.js 的 fetch 超时）是 Chrome 103 新增；
+  // 版本地板低于 103 时，Chrome 102 上每个 fetch 调用点直接 TypeError，翻译全灭。
+  const floor = Number(manifest.minimum_chrome_version);
+  assert.ok(floor >= 103, `minimum_chrome_version 必须 >= 103（AbortSignal.timeout），实际: ${floor}`);
+  const raw = readFileSync(join(root, "background/engine.js"), "utf8");
+  if (raw.includes("AbortSignal.timeout")) {
+    assert.ok(floor >= 103, "engine.js 使用 AbortSignal.timeout 时地板不得低于 103");
+  }
+});
+
 console.log("\n[4] 权限最小化");
 test("未申请未使用的权限", () => {
   const permissions = manifest.permissions || [];

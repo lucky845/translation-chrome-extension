@@ -104,6 +104,26 @@ async function loadContent(html, options = {}) {
     },
   };
 
+  // 可选：模拟 chrome.storage（设置变更同步测试用）
+  if (options.storage) {
+    const storageListeners = [];
+    window.chrome.storage = {
+      sync: {
+        get: async defaults => {
+          const out = {};
+          for (const key of Object.keys(defaults)) {
+            out[key] = key in (options.storageValues || {}) ? options.storageValues[key] : defaults[key];
+          }
+          return out;
+        },
+      },
+      onChanged: { addListener: fn => storageListeners.push(fn) },
+    };
+    window.__tpFireStorageChange = (changes, area) => {
+      for (const fn of storageListeners) fn(changes, area || "sync");
+    };
+  }
+
   // 传统脚本：用 Function 参数把 jsdom 的 document/window 注入脚本作用域。
   // dom-core.js 以 (function(root){...})(globalThis) 挂载，所以 globalThis 形参必须传 window。
   const load = (file, names) => {
@@ -134,7 +154,7 @@ async function loadContent(html, options = {}) {
       if (returned !== true) resolve(undefined);
     });
 
-  return { window, sent, dispatch };
+  return { window, sent, dispatch, settings };
 }
 
 console.log("[1] 整页翻译");
@@ -631,6 +651,120 @@ await test("引擎连续拒绝时立刻收工，不让用户白等", async () =>
   assert.ok(elapsed < 20000, `连续失败时应尽早收工，实际耗时 ${elapsed}ms`);
   assert.ok(result.failed > 0, `必须如实上报失败段数，实际 ${result.failed}`);
   assert.match(result.error || "", /连续/, `错误信息应说明是连续失败，实际: ${result.error}`);
+});
+
+console.log("\n[回归 v1.1.4] 属性文本翻译");
+await test("placeholder / title 属性文本被翻译（translateBatch 返回对象数组）", async () => {
+  const { window, dispatch } = await loadContent(
+    '<input id="q" placeholder="Search the docs"><p title="Open the menu">Hello one.</p>'
+  );
+  const result = await dispatch({ action: "translatePage" });
+  assert.equal(result.success, true, result.error || "");
+  const input = window.document.getElementById("q");
+  assert.equal(
+    input.getAttribute("placeholder"),
+    "译[Search the docs]",
+    `placeholder 应被翻译，实际: ${input.getAttribute("placeholder")}（旧实现按字符串判断返回对象，永远为 0 条）`
+  );
+  const p = window.document.querySelector("p");
+  assert.equal(p.getAttribute("title"), "译[Open the menu]", `title 应被翻译，实际: ${p.getAttribute("title")}`);
+});
+
+await test("内联 void 元素（img）的 alt 在正文翻译后仍然保留译文", async () => {
+  // 正文应用译文时会把内联元素 cloneNode(false) 重建，原元素脱离文档。
+  // 若属性翻译发生在正文之后，setAttribute 打在已脱离的旧节点上，
+  // 可见的克隆体仍是英文 alt（真机实测 <img alt="tower"> → 翻完仍是 tower）。
+  const { window, dispatch } = await loadContent(
+    '<p>The keeper climbed <img id="tower" src="/x.png" alt="tower"> every morning.</p>'
+  );
+  const result = await dispatch({ action: "translatePage" });
+  assert.equal(result.success, true, result.error || "");
+  const img = window.document.getElementById("tower");
+  assert.ok(img, "<img> 必须仍在文档中");
+  assert.ok(img.isConnected, "<img> 必须仍在文档中（不是脱离的旧节点）");
+  assert.equal(
+    img.getAttribute("alt"),
+    "译[tower]",
+    `可见 <img> 的 alt 应为译文，实际: ${img.getAttribute("alt")}（属性翻译晚于正文翻译时会被 clone 丢掉）`
+  );
+});
+
+await test("img alt 翻译后「显示原文」，alt 必须还原成原文", async () => {
+  const { window, dispatch } = await loadContent(
+    '<p>The keeper climbed <img id="tower" src="/x.png" alt="tower"> every morning.</p>'
+  );
+  await dispatch({ action: "translatePage" });
+  assert.equal(window.document.getElementById("tower").getAttribute("alt"), "译[tower]", "应先翻译");
+
+  await dispatch({ action: "restorePage" });
+  const img = window.document.getElementById("tower");
+  assert.ok(img, "<img> 必须仍在文档中");
+  assert.equal(
+    img.getAttribute("alt"),
+    "tower",
+    `恢复后 alt 应还原成原文，实际: ${img.getAttribute("alt")}（原元素已被 clone 替换，须沿 cloneMap 溯源）`
+  );
+});
+
+console.log("\n[回归 v1.1.4] 译文样式选择器");
+await test("注入的选择器必须匹配 markTranslated 写入的空值属性", async () => {
+  const { window, dispatch } = await loadContent("<p>Hello one.</p>", {
+    settings: { translatedStyle: "highlight" },
+  });
+  await dispatch({ action: "translatePage" });
+  const style = window.document.getElementById("tp-translated-style");
+  assert.ok(style, "应注入样式元素");
+  assert.ok(!style.textContent.includes(":not("), `选择器不应排除空值属性，实际: ${style.textContent}`);
+  const p = window.document.querySelector("p");
+  assert.ok(p.hasAttribute("data-tp-translated"), "段落应已打翻译标记");
+  const selector = style.textContent.split("{")[0].trim();
+  assert.ok(p.matches(selector), `已标记元素必须命中注入的选择器「${selector}」（旧规则空值属性 matches=false）`);
+  assert.ok(style.textContent.includes("background"), "高亮规则应保留");
+});
+
+console.log("\n[回归 v1.1.4] 设置变更实时同步");
+await test("译文样式经 storage.onChanged 变更后实时生效，无需刷新", async () => {
+  const env = await loadContent("<p>Hello one.</p>", {
+    settings: { translatedStyle: "none" },
+    storage: true,
+  });
+  await env.dispatch({ action: "translatePage" });
+  assert.equal(env.window.document.getElementById("tp-translated-style"), null, "初始 none 不应注入样式");
+
+  env.settings.translatedStyle = "underline";
+  env.window.__tpFireStorageChange({ translatedStyle: { newValue: "underline" } }, "sync");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  let style = env.window.document.getElementById("tp-translated-style");
+  assert.ok(style, "样式变更后应重注入（旧实现无同步通道，必须刷新页面）");
+  assert.ok(style.textContent.includes("text-decoration"), "应为下划线规则");
+
+  env.settings.translatedStyle = "none";
+  env.window.__tpFireStorageChange({ translatedStyle: { newValue: "none" } }, "sync");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  style = env.window.document.getElementById("tp-translated-style");
+  assert.equal(style, null, "切回无标记时应移除样式元素");
+});
+
+console.log("\n[回归 v1.1.4] 端侧预热语言对");
+await test("translatePage 的端侧预热使用设置中的语言对，而非硬编码 en→zh", async () => {
+  const env = await loadContent("<p>Hello one.</p>", {
+    offline: true,
+    storage: true,
+    storageValues: { sourceLanguage: "ja", targetLanguage: "en" },
+    settings: { sourceLanguage: "ja", targetLanguage: "en" },
+  });
+  const createCalls = [];
+  env.window.Translator.create = async options => {
+    createCalls.push(options);
+    return { translate: async text => `本地[${text}]` };
+  };
+  await env.dispatch({ action: "translatePage" });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.ok(createCalls.length > 0, "应至少触发一次 Translator.create 预热");
+  assert.ok(
+    createCalls.every(options => options.sourceLanguage === "ja" && options.targetLanguage === "en"),
+    `预热语言对必须跟随设置（ja→en），实际: ${JSON.stringify(createCalls)}（旧实现硬编码 en→zh）`
+  );
 });
 
 const failed = results.filter(result => !result.ok).length;

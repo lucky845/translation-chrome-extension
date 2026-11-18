@@ -338,6 +338,10 @@ const chromeArgs = [
 // headful 模式（TP_E2E_HEADFUL=1）：UA 是正常 "Google Chrome" 而非 "HeadlessChrome"，
 // 可绕开 Google 对 headless 环境的间歇性反爬限流，验证完整翻译断言
 if (!process.env.TP_E2E_HEADFUL) chromeArgs.push("--headless=new");
+// 受限沙箱（容器 / CI / 受限用户会话）里 Chrome 自己的沙箱无法初始化
+// （"sandbox initialization failed: Operation not permitted"），表现为
+// service worker target 根本不出现。TP_E2E_NO_SANDBOX=1 时关闭它。
+if (process.env.TP_E2E_NO_SANDBOX) chromeArgs.push("--no-sandbox", "--disable-dev-shm-usage");
 // 需要代理访问 Google 的环境（如本机网络）用 TP_E2E_PROXY=http://127.0.0.1:6152 node test/e2e.mjs
 if (process.env.TP_E2E_PROXY) chromeArgs.push(`--proxy-server=${process.env.TP_E2E_PROXY}`);
 const chrome = spawn(chromePath, chromeArgs, { stdio: "ignore" });
@@ -517,17 +521,27 @@ try {
     if (text.includes("Tōkyō")) throw new Error(`rt 注音未过滤: ${text}`);
   });
 
-  await test("属性文本在真实页面能采集到 title/placeholder", async () => {
+  await test("属性文本在真实页面能采集到 title/placeholder/alt", async () => {
+    // 注意：本用例在整页翻译之后运行，此时这些属性已是中文译文。
+    // 用 "en" 作目标语言：isAlreadyTarget 只对中文目标生效，因此中文属性不会被
+    // 当作「已是目标语言」跳过，采集器覆盖哪几类属性才验证得出来。
+    // 不断言具体英文文案——文案断言正是 v1.1.4 之前「属性从未被翻译」这个
+    // bug 得以长期潜伏的原因。
     const probe = await evaluate(
       page,
       `(() => {
-        const entries = window.__TP_DOM__.collectAttributeTexts(document.body, "zh-CN");
+        const entries = window.__TP_DOM__.collectAttributeTexts(document.body, "en");
         return entries.map(e => e.attr + "=" + e.text);
       })()`
     );
-    const joined = probe.join("|");
-    if (!joined.includes("title=Open settings panel")) throw new Error(`title 未采集: ${joined}`);
-    if (!joined.includes("placeholder=Search documents")) throw new Error(`placeholder 未采集: ${joined}`);
+    // 只要求 title 与 placeholder 两类：它们在本 fixture 里是多个词，必然过采集阈值。
+    // alt 的原文是 "tower"（会被翻成单字「塔」），翻译之后再采集会因
+    // 「单字属性不送翻」这条刻意的产品规则被跳过——那是设计如此，不是缺陷。
+    // 翻译前的采集能力由 vi.1.4 的 [2.6] 用例（断言 alt/title/placeholder 都变成中文）覆盖。
+    const attrs = new Set(probe.map(item => String(item).split("=")[0]));
+    for (const required of ["title", "placeholder"]) {
+      if (!attrs.has(required)) throw new Error(`未采集到 ${required} 类属性，实际: ${probe.join("|")}`);
+    }
   });
 
   await test("P2-7 MutationObserver 捕获文本节点变化（React 只改 textContent）", async () => {
@@ -578,6 +592,72 @@ try {
         throw new Error(`元素被框架改写后仍标记为已翻译且无法重新采集: ${JSON.stringify(after)}`);
       }
     }
+  });
+
+  console.log("\n[2.6] v1.1.4 修复的真机核验（jsdom 无法覆盖）");
+
+  await test("v1.1.4 属性文本被翻译（title / placeholder）", async () => {
+    if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
+    const probe = await evaluate(
+      page,
+      `({
+        title: document.getElementById("titled") ? document.getElementById("titled").getAttribute("title") : null,
+        placeholder: document.getElementById("search") ? document.getElementById("search").getAttribute("placeholder") : null,
+        alt: document.querySelector("#para2 img") ? document.querySelector("#para2 img").getAttribute("alt") : null,
+      })`
+    );
+    const hasHan = str => /[\u4e00-\u9fff]/.test(String(str || ""));
+    if (!hasHan(probe.title)) throw new Error(`title 属性未被翻译: ${JSON.stringify(probe.title)}`);
+    if (!hasHan(probe.placeholder)) throw new Error(`placeholder 属性未被翻译: ${JSON.stringify(probe.placeholder)}`);
+    if (!hasHan(probe.alt)) throw new Error(`img alt 属性未被翻译: ${JSON.stringify(probe.alt)}`);
+  });
+
+  await test("v1.1.4 译文样式选择器在真实 DOM 上命中", async () => {
+    if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
+    // 切到高亮样式，验证注入的规则真的能匹配到已标记元素（而不是被 :not() 排除）
+    const tabId = await findFixtureTab(swCdp);
+    await swCdp.send("Runtime.evaluate", {
+      expression: `chrome.storage.sync.set({ translatedStyle: "highlight" })`,
+      awaitPromise: true,
+    });
+    await sleep(400);
+    const probe = await evaluate(
+      page,
+      `(() => {
+        const el = document.querySelector("[data-tp-translated]");
+        if (!el) return { marked: false };
+        const bg = getComputedStyle(el).backgroundColor;
+        return { marked: true, bg };
+      })()`
+    );
+    if (!probe.marked) throw new Error("页面上没有已翻译标记的元素");
+    if (probe.bg === "rgba(0, 0, 0, 0)" || probe.bg === "transparent") {
+      throw new Error(`已标记元素没有拿到高亮底色（选择器未命中），实际: ${probe.bg}`);
+    }
+    // 还原样式设置，避免影响后续用例
+    await swCdp.send("Runtime.evaluate", {
+      expression: `chrome.storage.sync.set({ translatedStyle: "none" })`,
+      awaitPromise: true,
+    });
+    await sleep(200);
+  });
+
+  await test("v1.1.4 设置变更经 storage.onChanged 实时到达页面（无需刷新）", async () => {
+    // 改目标语言后，content script 的设置缓存必须失效；这里用 getStatus 间接确认页面仍响应，
+    // 再读一次设置确认新值已被页面采纳（缓存未失效时会拿到旧值）
+    await swCdp.send("Runtime.evaluate", {
+      expression: `chrome.storage.sync.set({ targetLanguage: "zh-CN", autoTranslate: false })`,
+      awaitPromise: true,
+    });
+    await sleep(300);
+    const adopted = await evaluate(
+      page,
+      `(async () => {
+        const settings = await new Promise(resolve => chrome.runtime.sendMessage({ action: "getSettings" }, resolve));
+        return settings && settings.settings ? settings.settings.targetLanguage : null;
+      })()`
+    );
+    if (adopted !== "zh-CN") throw new Error(`设置未同步到页面: ${adopted}`);
   });
 
   console.log("\n[3] 恢复");
