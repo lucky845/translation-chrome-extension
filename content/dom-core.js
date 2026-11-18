@@ -316,10 +316,31 @@
    * @param {Document} doc 文档对象
    * @return {?DocumentFragment} 构建失败返回 null
    */
-  function buildFragment(pieces, placeholders, doc) {
+  function buildFragment(pieces, placeholders, doc, clones) {
     const fragment = doc.createDocumentFragment();
     /** @type {Element[]} */
     const stack = [];
+
+    /**
+     * 克隆元素并同步其当前属性（含已翻译的 alt/title）。
+     *
+     * cloneNode(false) 复制的是**调用时刻**的属性快照，本身没问题；
+     * 真正的坑在于克隆体进入 DOM 后，原来的 entry.element 就脱离文档了：
+     * 之后无论是「属性翻译」还是「还原属性原文」，setAttribute 都打在
+     * 这个游离节点上，屏幕上看得到的克隆体永远不变
+     * （真机实测：img alt 翻完是「塔」，点「显示原文」后仍是「塔」）。
+     * 因此这里把「原元素 → 克隆体」记进 clones，让属性链路能改写活着的那个。
+     * @param {Element} source 源元素
+     * @return {Element} 克隆体
+     */
+    function cloneWithAttrs(source) {
+      const copy = source.cloneNode(false);
+      if (clones) {
+        // 同一元素可能被克隆多次（重试/二次应用），始终以最后一次为准
+        clones.set(source, copy);
+      }
+      return copy;
+    }
 
     /**
      * 当前插入位置。
@@ -342,12 +363,12 @@
       if (!entry) return null; // 译文引用了不存在的占位符
 
       if (piece.type === "void") {
-        target().appendChild(entry.element.cloneNode(false));
+        target().appendChild(cloneWithAttrs(entry.element));
         continue;
       }
 
       if (piece.type === "open") {
-        const skeleton = entry.element.cloneNode(false);
+        const skeleton = cloneWithAttrs(entry.element);
         target().appendChild(skeleton);
         stack.push(skeleton);
         continue;
@@ -377,6 +398,13 @@
       this.placeholders = new Map();
       /** @type {Map<number, Element>} brace {{n}} 模式的原子占位符映射（自定义引擎用） */
       this.braceMap = new Map();
+      /**
+       * 原内联元素 → 当前活着的克隆体。
+       * 正文译文应用时内联元素会被 clone 重建，原对象脱离文档；
+       * 属性（alt/title/placeholder）的读与写都必须落在克隆体上才有意义。
+       * @type {Map<Element, Element>}
+       */
+      this.cloneMap = new Map();
       /** 去掉全部占位符后的纯文本 */
       this.plainText = "";
       /** @type {Array<Text>} 参与翻译的文本节点（文档顺序），降级时就地替换用 */
@@ -523,7 +551,7 @@
       // 此时应用会把 `<a>` 当字面文本渲染，用户会看到源码。宁可保留原文。
       if (!placeholdersIntact(pieces, this.placeholders)) return false;
 
-      const fragment = buildFragment(pieces, this.placeholders, this.doc);
+      const fragment = buildFragment(pieces, this.placeholders, this.doc, this.cloneMap);
       if (fragment === null) return false;
 
       if (this.shallow) return this.applyShallow(fragment);
@@ -1143,7 +1171,24 @@
       const next = translated.get(entry.text);
       if (!next || next === entry.text) continue;
       if (saved) {
-        saved.push({ element: entry.element, attr: entry.attr, value: entry.element.getAttribute(entry.attr) });
+        // 除了元素引用，额外记下「标签名 + 该标签在文档中的序号」。
+        // 正文翻译会把内联元素 cloneNode 重建、恢复时又会回写 innerHTML，
+        // 原始引用随时可能脱离文档；靠这组定位信息才能在还原时找回
+        // 屏幕上真正显示的那个元素（真机实测：img alt 翻成「塔」后，
+        // 「显示原文」却还原不回去，正是因为引用早已失效）。
+        saved.push({
+          element: entry.element,
+          attr: entry.attr,
+          value: entry.element.getAttribute(entry.attr),
+          selector: null,
+          tag: entry.element.tagName ? entry.element.tagName.toLowerCase() : "",
+          ordinal: -1,
+        });
+        const record = saved[saved.length - 1];
+        if (record.tag && typeof document !== "undefined" && document.querySelectorAll) {
+          const sameTag = Array.from(document.getElementsByTagName(record.tag));
+          record.ordinal = sameTag.indexOf(entry.element);
+        }
       }
       entry.element.setAttribute(entry.attr, next);
       applied++;
@@ -1154,13 +1199,23 @@
   /**
    * 还原属性文本。
    * @param {Array<{element: Element, attr: string, value: string}>} saved 原值记录
+   * @param {?Function} [resolveElement] 把原元素解析成当前活节点（clone 溯源）
    * @return {void}
    */
-  function restoreAttributeTexts(saved) {
+  function restoreAttributeTexts(saved, resolveElement) {
     if (!saved) return;
     for (const item of saved) {
       try {
-        item.element.setAttribute(item.attr, item.value);
+        // 解析顺序：调用方给的溯源函数 → 原引用（仍在文档中）→ 按 tag+序号重新定位
+        let target = resolveElement ? resolveElement(item) : item.element;
+        if (!target || target.isConnected === false) {
+          if (item.tag && typeof document !== "undefined" && document.getElementsByTagName) {
+            const sameTag = Array.from(document.getElementsByTagName(item.tag));
+            if (item.ordinal >= 0 && item.ordinal < sameTag.length) target = sameTag[item.ordinal];
+          }
+        }
+        if (!target) continue;
+        target.setAttribute(item.attr, item.value);
       } catch {
         // 元素已被页面移除，忽略
       }

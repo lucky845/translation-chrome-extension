@@ -284,6 +284,19 @@
           }
         }
 
+        // 属性文本必须先于正文翻译：内联元素（<img alt>、<a title> 等）在正文
+        // 译文应用时会被 cloneNode(false) 重建，原元素随即脱离文档；若此时才写
+        // setAttribute，改的是已脱离的旧节点，可见的克隆体仍保留旧属性
+        // （真机实测：<p> 里的 <img alt="tower"> 翻完后 alt 仍是英文）。
+        // 失败不影响整体结果——tooltip 翻不了不该让整页判定为失败。
+        if (this.attributeEntries.length > 0) {
+          try {
+            await this.translateAttributes(from, target);
+          } catch {
+            // 属性翻译失败静默降级，正文译文保留
+          }
+        }
+
         const remaining = this.units.filter(unit => !unit.translated);
         let failedCount = 0;
         if (remaining.length > 0) {
@@ -293,15 +306,6 @@
           this.failedCount = 0;
         }
 
-        // 属性文本：正文翻完再补一轮，复用同一批引擎与缓存。
-        // 失败不影整体结果——tooltip 翻不了不该让整页判定为失败。
-        if (this.attributeEntries.length > 0) {
-          try {
-            await this.translateAttributes(from, target);
-          } catch {
-            // 属性翻译失败静默降级，正文译文保留
-          }
-        }
         this.hideIndicator();
 
         if (applied === 0) {
@@ -375,8 +379,11 @@
 
       const map = new Map();
       texts.forEach((text, index) => {
-        const translated = results.results[index];
-        if (typeof translated === "string" && translated.trim() && translated !== text) {
+        // SW 的 translateBatch 返回 {text, detected} 对象数组，不是字符串数组。
+        // 旧实现按字符串判断，typeof 永远是 "object"，属性翻译从未生效过。
+        const piece = results.results[index];
+        const translated = piece && typeof piece.text === "string" ? piece.text : null;
+        if (translated && translated.trim() && translated !== text) {
           map.set(text, translated);
         }
       });
@@ -408,7 +415,10 @@
 
       const el = document.createElement("style");
       el.id = id;
-      el.textContent = `[data-tp-translated]:not([data-tp-translated=""]) { ${rule} }`;
+      // markTranslated 写入的是空值属性（setAttribute(name, "")），
+      // 选择器不能带 :not([data-tp-translated=""])——那会把每个已标记元素都排除掉，
+      // 样式永远不生效（jsdom 实测 matches() === false）。
+      el.textContent = `[data-tp-translated] { ${rule} }`;
       document.documentElement.appendChild(el);
     },
 
@@ -863,9 +873,22 @@
         if (this.units[index].restore()) restored++;
       }
 
-      // 属性文本单独还原：单元里没有它们的位置
+      // 属性文本单独还原：单元里没有它们的位置。
+      // 注意元素可能已被正文翻译 clone 替换（<img alt> 这类内联 void 元素），
+      // 此时记录里的 element 已脱离文档；必须沿各单元的 cloneMap 找到
+      // 屏幕上那个活节点再写回，否则「显示原文」之后 alt 仍是译文。
       if (this.savedAttrText && this.savedAttrText.length > 0) {
-        DOM.restoreAttributeTexts(this.savedAttrText);
+        const alive = item => {
+          if (!item || !item.element) return null;
+          if (item.element.isConnected) return item.element;
+          for (const unit of this.units) {
+            if (!unit.cloneMap || unit.cloneMap.size === 0) continue;
+            const clone = unit.cloneMap.get(item.element);
+            if (clone && clone.isConnected) return clone;
+          }
+          return item.element; // 找不到就照旧写回（至少不静默丢弃）
+        };
+        DOM.restoreAttributeTexts(this.savedAttrText, alive);
         this.savedAttrText = [];
       }
       this.attributeEntries = [];
@@ -1248,9 +1271,14 @@
     const action = message && message.action;
 
     if (action === "translatePage") {
-      // 用户手势窗口内先触发端侧模型下载，真正逐段翻译时就不用等
-      if (OFFLINE && OFFLINE.supported) {
-        OFFLINE.warmup("en", "zh").catch(() => {});
+      // 用户手势窗口内先触发端侧模型下载，真正逐段翻译时就不用等。
+      // 语言对必须跟随用户设置：硬编码 en→zh 会在用户目标为其他语言时
+      // 预热错误的语言对，真正翻译时还得在无手势上下文里重新下载模型而被拒。
+      // content script 默认可访问 chrome.storage；一次读取在瞬时激活窗口内完成，不丢手势。
+      if (OFFLINE && OFFLINE.supported && chrome.storage && chrome.storage.sync) {
+        Promise.resolve(chrome.storage.sync.get({ sourceLanguage: "auto", targetLanguage: "zh-CN" }))
+          .then(preferences => OFFLINE.warmup(preferences.sourceLanguage, preferences.targetLanguage))
+          .catch(() => {});
       }
       controller.translatePage().then(sendResponse);
       return true;
@@ -1268,13 +1296,29 @@
       sendResponse({ success: true });
       return false;
     }
-    if (action === "settingsUpdated") {
-      controller.invalidateSettings();
-      sendResponse({ success: true });
-      return false;
-    }
     return false;
   });
+
+  // ---- 设置变更同步 ----
+  // popup/options 直接写 chrome.storage.sync；runtime.sendMessage 不会投递给 content script
+  // （那是 tabs.sendMessage 的领地），所以旧的 settingsUpdated 消息永远不会到达这里。
+  // 真正可靠的通道是 storage.onChanged：收到变更立刻失效设置缓存，
+  // 下一次翻译按新配置执行，页面无需刷新。
+  if (chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "sync") return;
+      // 译文样式是静态注入的 CSS：变更且页面已翻译时，重读设置并重注入
+      if (changes.translatedStyle && controller.state === "translated") {
+        controller.invalidateSettings();
+        controller
+          .loadSettings()
+          .then(settings => controller.applyTranslatedStyle(settings.translatedStyle))
+          .catch(() => {});
+        return;
+      }
+      controller.invalidateSettings();
+    });
+  }
 
   // ---- 自动翻译 ----
 
