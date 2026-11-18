@@ -46,6 +46,9 @@ coverage/
 # ESLint cache
 .eslintcache
 
+# npm 本地缓存（沙箱内 ~/.npm 不可写，npm 命令需 --cache $PWD/.npm-cache）
+.npm-cache/
+
 # Prettier cache
 .prettierignore
 .prettiercache
