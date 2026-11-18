@@ -449,6 +449,30 @@ test("display:inline-block 容器继续下钻，不整块当行内占位符", ()
   assert.ok(texts.includes("Inline block text."), `inline-block 里的段落漏翻: ${texts.join("|")}`);
 });
 
+test("getComputedStyle 抛错时按标签兜底，不会因取不到样式而把行内元素判成块级", () => {
+  const { api, win } = load("<p>a <strong>b</strong></p>");
+  const strong = win.document.querySelector("strong");
+  const div = win.document.createElement("div");
+  win.document.body.appendChild(div);
+  // 注入一个会抛错的视图，验证 try/catch 的降级分支
+  Object.defineProperty(strong.ownerDocument, "defaultView", {
+    value: {
+      getComputedStyle() {
+        throw new Error("样式引擎不可用");
+      },
+    },
+    configurable: true,
+  });
+  assert.equal(api.isInline(strong), true, "取不到样式时 strong 应按标签判为行内");
+  assert.equal(api.isInline(div), false, "取不到样式时 div 应判为块级");
+});
+
+test("display:contents 不生成盒子，交给上层当容器", () => {
+  const { api, win } = load(`<div id="c" style="display: contents"><span>x</span></div>`);
+  const el = win.document.getElementById("c");
+  assert.equal(api.isInline(el), false, "contents 容器不能当行内占位符");
+});
+
 test("行内徽章仍是独立单元，不会被父段落吞并", () => {
   const { api, win } = load(`<p>Status <span style="display: inline-block">Beta</span></p>`);
   const texts = api.collectUnits(win.document.body, "tag").map(u => u.text);

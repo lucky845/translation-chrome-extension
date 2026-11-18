@@ -193,6 +193,14 @@ node test/e2e.mjs     # 真实 Chrome E2E（macOS + 本机 Chrome）
 npm run lint
 ```
 
+Lint 用 ESLint 10 的 flat config（`eslint.config.mjs`）。原先依赖的 `eslint-config-google`
+在 ESLint 9+ 下会直接崩溃（它包含已移除的 `valid-jsdoc` 规则，且是 eslintrc 格式，
+在 flat config 下本就只生效一半），因此已把它的 63 条有效规则内联进配置文件，
+并移除冗余的 `@eslint/eslintrc`。迁移后有效规则集与迁移前逐条比对完全一致。
+
+若在受限环境（沙箱、只读 HOME）里 `npm` 报缓存不可写，用独立缓存目录：
+`npm install --cache "$PWD/.npm-cache"`。
+
 E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`（有头模式）、
 `TP_E2E_NO_SANDBOX=1`（容器 / CI / 受限用户会话里 Chrome 自身沙箱无法初始化时开启）。
 
@@ -206,6 +214,20 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
   不做请求合并）。对限流敏感的公共免费实例，请换用对应预设或把 `concurrency` 调回 1（此时会保留 120ms 节流间隔）
 
 ## 📝 更新日志
+
+### 工具链 — 依赖漏洞清零
+
+`npm audit` 从 16 个漏洞（11 high / 5 moderate）降到 **0**。
+
+- 全部漏洞来自 ESLint 8 的传递依赖（`flatted`、`js-yaml`、`minimatch`、`glob`、
+  `rimraf`、`flat-cache`、`file-entry-cache`、`@humanwhocodes/config-array`），
+  其中两个上游标为「No fix available」。ESLint 9 仍带 `@eslint/eslintrc`，
+  漏洞清不干净；升到 ESLint 10 才整条链路断开
+- 顺带清掉一个从未被 import 的冗余依赖 `@eslint/eslintrc`
+- ESLint 10 新增的三条规则真实抓到了 3 处问题：`no-useless-assignment`（死赋值）、
+  `preserve-caught-error`（重抛时丢掉原始 error，现在保留 `cause` 供排查）、
+  多处未使用的 catch 绑定
+- 迁移后有效规则集与迁移前**逐条比对完全一致**（83 条），不掺任何无关改动
 
 ### v1.1.5 — 自定义接口可用性
 

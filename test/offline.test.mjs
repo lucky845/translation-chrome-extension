@@ -129,6 +129,27 @@ await test("创建失败不缓存失败态：下次仍会重试", async () => {
   assert.equal(creates, 2);
 });
 
+await test("翻译失败时保留原始 error 作为 cause（排查要能拿到真实堆栈）", async () => {
+  const boom = new Error("Requires a user gesture");
+  const { window } = load(
+    mockTranslator({
+      create: async () => ({
+        translate: async () => {
+          throw boom;
+        },
+      }),
+    })
+  );
+  const OT = window.__TP_OFFLINE__;
+  const error = await OT.translate(["a"], "en", "zh-CN").then(
+    () => null,
+    e => e
+  );
+  assert.ok(error, "必须抛错");
+  assert.match(error.message, /端侧翻译失败/);
+  assert.equal(error.cause, boom, "cause 必须是原始 error 对象，不能被丢掉");
+});
+
 await test("warmup 成功 → 记录无失败原因；失败 → 记录原因供界面提示", async () => {
   const okWindow = load(mockTranslator());
   assert.equal(await okWindow.__TP_OFFLINE__.warmup("en", "zh-CN"), true);
