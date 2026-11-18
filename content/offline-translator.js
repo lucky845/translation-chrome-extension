@@ -130,7 +130,9 @@ async function translate(texts, fromLang, toLang) {
       const out = await session.translate(trimmed);
       results.push({ text: out, detected: fromLang === "auto" ? null : fromLang });
     } catch (error) {
-      throw new Error("端侧翻译失败：" + String((error && error.message) || error));
+      throw new Error("端侧翻译失败：" + String((error && error.message) || error), {
+        cause: error,
+      });
     }
   }
 

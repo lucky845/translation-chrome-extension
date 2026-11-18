@@ -24,7 +24,6 @@ export class BaseEngine {
    * @param {string} toLang 目标语言
    * @return {Promise<Array<Object>>} 与输入等长同序的 {text, detected}
    */
-  // eslint-disable-next-line no-unused-vars
   async translate(texts, fromLang, toLang) {
     throw new FatalTranslationError("BaseEngine.translate 未实现");
   }

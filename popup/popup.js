@@ -89,7 +89,7 @@
         } else {
           await checkEngine(els);
         }
-      } catch (e) {
+      } catch {
         if (els.engineInfo) {
           els.engineInfo.textContent = "引擎可用（探测跳过）";
           els.engineInfo.className = "engine-info warn";
@@ -139,7 +139,7 @@
       if (els.target) els.target.value = stored.targetLanguage;
       if (els.source) els.source.value = stored.sourceLanguage;
       if (els.auto) els.auto.checked = Boolean(stored.autoTranslate);
-    } catch (e) {
+    } catch {
       // storage 失败也不影响界面显示
     }
   }

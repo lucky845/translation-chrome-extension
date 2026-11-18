@@ -152,7 +152,7 @@
     // 必须从 ownerDocument.defaultView 取（Chrome 里两者等价）。
     const view = element.ownerDocument && element.ownerDocument.defaultView;
     if (view && typeof view.getComputedStyle === "function") {
-      let display = "";
+      let display;
       try {
         display = view.getComputedStyle(element).display || "";
       } catch {

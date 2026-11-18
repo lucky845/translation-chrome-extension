@@ -127,7 +127,7 @@ const handlers = {
       try {
         const engines = await engineAvailability(settings);
         return { ok: true, engines };
-      } catch (error) {
+      } catch {
         return {
           ok: true,
           engines: {
