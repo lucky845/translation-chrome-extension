@@ -615,7 +615,7 @@ try {
   await test("v1.1.4 译文样式选择器在真实 DOM 上命中", async () => {
     if (translationBlocked) throw new Error("SKIP: 前置翻译被限流跳过");
     // 切到高亮样式，验证注入的规则真的能匹配到已标记元素（而不是被 :not() 排除）
-    const tabId = await findFixtureTab(swCdp);
+    await findFixtureTab(swCdp);
     await swCdp.send("Runtime.evaluate", {
       expression: `chrome.storage.sync.set({ translatedStyle: "highlight" })`,
       awaitPromise: true,

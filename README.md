@@ -202,7 +202,8 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 - `pre`、`code`、表单控件、`contenteditable` 区域不翻译（设计如此）
 - `display:none` 与 `aria-hidden="true"` 的内容不翻译：翻了看不见，还会把装饰性字面量翻乱；弹层打开时会作为新节点重新进入增量队列
 - Google 免费端点无官方 SLA，极端限流时返回明确错误而不是伪造结果
-- 自定义接口按**逐条串行**发送（不同服务批量格式差异太大，强行批量只会更慢），整页翻译会比 Google 慢
+- 自定义接口默认**按预设并发**发送（通用 / DeepLX / LibreTranslate 为 4，OpenAI 为 2；不同服务的批量格式差异太大，
+  不做请求合并）。对限流敏感的公共免费实例，请换用对应预设或把 `concurrency` 调回 1（此时会保留 120ms 节流间隔）
 
 ## 📝 更新日志
 
@@ -235,6 +236,22 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 
 - 删除全仓无调用方的 `setSettings` 消息 handler 与 `settingsUpdated` 死分支
 - 移除 MyMemory 请求里的 `User-Agent` / `Referer` / `Origin` —— 这些是 fetch 禁改头，浏览器静默丢弃，写了也不生效
+
+**性能**
+
+- 自定义接口整页翻译慢 80 倍的问题：worker 在每个任务后固定 `sleep(120ms)`，且通用预设
+  `concurrency: 1`（纯串行）。实测 600 段要 74 秒。现在节流只在串行路径生效，
+  并发预设不再被固定 sleep 拖累；通用预设并发 1 → 4（与 DeepLX / LibreTranslate 对齐，
+  自建服务通常能承受，目标服务有限流可换预设）。
+  **实测：60 段从 ~7.4s → 91ms。** 串行路径仍保留节流，公共免费接口不受影响
+
+**修复（真机实测发现）**
+
+- 「测试连接」按钮永久卡在「测试中…」：`ensurePermission` 先 `await chrome.permissions.contains()`
+  再 `chrome.permissions.request()`，而 request 必须在用户手势的同步调用栈里发出——
+  先 await 就把手势消耗掉了。这是每个用户第一次配置自定义接口的必经路径，等于功能被完全阻断。
+  现在直接 request（已授权时立即 resolve 且不弹窗），并加 15 秒超时兜底：
+  弹窗被关掉或无头环境不弹窗时给出明确错误，不再无声悬挂
 
 ### v1.1.3 — 翻译真正跑起来了
 

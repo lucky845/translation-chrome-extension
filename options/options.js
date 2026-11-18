@@ -52,6 +52,13 @@
   /** 预设定义（来自后台，避免前端重复维护一份）。 */
   let presets = [];
 
+  /**
+   * 权限申请的等待上限。
+   * 用户关掉权限弹窗、或无头环境压根没有弹窗时，request() 的 Promise
+   * 可能永远不落地；不设上限界面就会一直显示「测试中…」。
+   */
+  const PERMISSION_TIMEOUT_MS = 15000;
+
   document.addEventListener("DOMContentLoaded", init);
 
   /**
@@ -384,14 +391,46 @@
     const pattern = originPattern(url);
     if (!pattern) return { ok: false, error: "接口地址不是合法的 http(s) URL" };
 
+    // 顺序很重要：chrome.permissions.request() 必须在用户手势的同步调用栈里发出。
+    // 先 await 一个 contains() 就把手势消耗掉了，request() 随后会抛
+    // "This function must be called during a user gesture"——而这是每个用户
+    // 第一次配置自定义接口的必经路径，等于功能被完全阻断。
+    // 已授权时 request() 会立即 resolve 且不弹窗，所以不需要先查。
     try {
-      const has = await chrome.permissions.contains({ origins: [pattern] });
-      if (has) return { ok: true };
-      const granted = await chrome.permissions.request({ origins: [pattern] });
+      const granted = await withTimeout(
+        chrome.permissions.request({ origins: [pattern] }),
+        PERMISSION_TIMEOUT_MS,
+        "权限申请超时（可能是权限弹窗被关闭或环境不支持弹窗）"
+      );
       return granted ? { ok: true } : { ok: false, error: "未授予该域名访问权限，翻译请求会被浏览器拦截" };
     } catch (error) {
+      // 极少数环境（如无头浏览器）根本不弹权限框，request() 的 Promise
+      // 会一直悬挂；没有兜底时界面上会永远停在「测试中…」。
       return { ok: false, error: `权限申请失败：${error.message || error}` };
     }
+  }
+
+  /**
+   * 给可能永久悬挂的 Promise 加超时，避免界面卡在加载态。
+   * @param {Promise} promise 目标 Promise
+   * @param {number} ms 超时毫秒
+   * @param {string} message 超时错误信息
+   * @return {Promise} 结果或超时拒绝
+   */
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        value => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        error => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
   }
 
   /**
