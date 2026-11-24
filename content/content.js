@@ -600,8 +600,10 @@
       let deferred = [];
       /** 请求失败的单元：循环结束后重试一轮，不能静默丢弃 */
       const failed = [];
-      /** 连续失败批次数：达到上限就收工，不在限流上死磕 */
+      /** 连续失败批次数：达到上限就收工，不在原地死磕 */
       let consecutiveFails = 0;
+      /** 最近一次批次的失败原因，用于如实上报（不猜原因） */
+      let lastFailure;
       const idleFor = () => Date.now() - lastScrollAt;
 
       /**
@@ -711,15 +713,17 @@
           if (!response || !response.ok) {
             if (!this.lastError) this.lastError = (response && response.error) || "翻译请求失败";
             // 失败批次不能就这么丢掉：用户看到的会是「翻译完成，但一半还是英文」。
-            // 收进 failed，循环结束后统一重试一轮——限流往往是短窗口，
-            // 隔一会儿再打一次能捞回不少（真机实测 429 之后 3 秒重试成功率高）。
+            // 收进 failed，循环结束后统一重试一轮。
+            lastFailure = (response && response.error) || "翻译请求失败";
             failed.push(...batch);
-            // 连续失败就早点收工：引擎被限流时死磕下去只会让用户干等
-            // （真机实测 200 段连续 429 时白等 103 秒）。剩下的原样报给用户，
-            // 他们可以过一会儿点「重新翻译」。
+            // 连续失败就早点收工，免得用户在原地干等。
+            // 但提示必须如实：这里只知道「连续几个批次没拿到有效响应」，
+            // 不知道原因。旧的文案写死了「多为限流」——HAR 实测过 17 条请求
+            // 全部 200 成功、一条 429 都没有，那句「限流」是自己编的，
+            // 把排查方向整个带偏。现在只说发生了什么，不猜原因。
             consecutiveFails++;
             if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
-              this.lastError = `引擎连续 ${consecutiveFails} 次拒绝请求（多为限流），已暂停翻译`;
+              this.lastError = `连续 ${consecutiveFails} 个批次未拿到有效响应，已暂停翻译（${lastFailure}）`;
               failed.push(...pending);
               pending.length = 0;
               deferred.length = 0;

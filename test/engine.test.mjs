@@ -425,6 +425,74 @@ await test("echo：真译文必须写缓存，不能被 echo 判定误伤", asyn
   clearCache();
 });
 
+await test("echo：批内有重复文本时 ok 必须为 true（否则整批被误判失败反复重试）", async () => {
+  // 真机 bug 复现：filled 曾经按「去重后的文本种数」累加，而 texts.length 数的是
+  // 位置总数。批内一有重复文本（"Readme" 出现 4 次这种在 GitHub 页面上到处都是），
+  // filled 就够不到 texts.length → ok=false → 整批进失败队列重试 → 连续 3 批失败
+  // → 触发「引擎连续 3 次拒绝请求（多为限流），已暂停翻译」，只翻了三分之一。
+  // 而 HAR 实测那 17 条请求全部 200 成功，一条 429 都没有。
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  await withMockFetch(
+    (url, init) => {
+      const texts = init && init.body ? JSON.parse(init.body)[0][0] : [];
+      // 全部 echo：引擎把这些判成「已是目标语言」
+      return new Response(JSON.stringify([texts.slice()]), { status: 200 });
+    },
+    async () => {
+      const texts = ["Readme", "Readme", "Readme", "Install", "Readme"];
+      const out = await translateTexts(texts, "auto", "zh-CN", "google");
+      assert.equal(out.ok, true, "5 段全部得到回应，不能报失败");
+      assert.equal(out.echoed, 5, "echo 必须按位置计数（5 个位置），不是按文本种数（2 种）");
+      assert.equal(out.error, null, "ok 时不应带错误信息");
+      assert.deepEqual(
+        out.results.map(r => r.text),
+        texts,
+        "echo 时每个位置都保留原文"
+      );
+    }
+  );
+  clearCache();
+});
+
+await test("echo：真译文的重复文本也全部按位置回填", async () => {
+  // 同一 bug 的另一面：重复文本拿到真译文时，每个位置都要被填上，
+  // 否则 results 里会留下空洞（表现为页面只翻了一部分）。
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  await withMockFetch(
+    (url, init) => {
+      const texts = init && init.body ? JSON.parse(init.body)[0][0] : [];
+      return new Response(JSON.stringify([texts.map(t => `译:${t}`)]), { status: 200 });
+    },
+    async () => {
+      const texts = ["Readme", "Readme", "Install", "Readme"];
+      const out = await translateTexts(texts, "auto", "zh-CN", "google");
+      assert.equal(out.ok, true);
+      assert.deepEqual(
+        out.results.map(r => r.text),
+        ["译:Readme", "译:Readme", "译:Install", "译:Readme"],
+        "重复文本的每个位置都必须有译文"
+      );
+    }
+  );
+  clearCache();
+});
+
 await test("echo：判定只认逐字符相同，不做语言推断", async () => {
   // 上一轮曾按字符比例猜源语言重发，把中文句子按英文重翻，比不翻更糟。
   // 这条断言锁死「只认完全相同」——差一个字符都不算 echo。

@@ -159,8 +159,6 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
   //  - 失败（请求没成功）→ 值得重试。
   // 混成「没翻成」上报会让上层对 echo 白重发一轮，还会把提示误报成限流/网络波动。
   let filled = 0;
-  /** @type {Set<number>} */
-  const echoUnitSeen = new Set();
   for (let index = 0; index < results.length; index++) {
     if (results[index]) {
       filled++;
@@ -169,14 +167,24 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     results[index] = { text: texts[index], detected: null };
   }
 
-  // 把 echo 的 miss 索引映射回输出位置（含批内重复文本的全部位置）
+  // echo 的回填必须按「位置」补，不能按「去重后的文本种数」补。
+  // 这里踩过一个坑：曾经写成 `if (slots.length > 0) filled++`，对每种文本只加 1，
+  // 而 texts.length 数的是位置总数。批内一旦有重复文本（"Readme" 出现 4 次
+  // 这种在真实页面上极常见），filled 就永远够不到 texts.length，ok 被判成
+  // false → 整批塞进失败队列重试 → 连续 3 批失败 → 触发「暂停翻译」。
+  // 用户看到的就是「提示限流，只翻了三分之一」，而 HAR 里实际全部 200 成功。
+  /** @type {Set<number>} */
+  const echoUnitSeen = new Set();
   if (translated) {
     translated.forEach((item, missIndex) => {
       if (!isEcho(misses[missIndex], item.text)) return;
       echoed.add(missIndex);
       const slots = positions.get(missKeys[missIndex]) || [];
-      for (const slot of slots) echoUnitSeen.add(slot);
-      if (slots.length > 0) filled++;
+      for (const slot of slots) {
+        echoUnitSeen.add(slot);
+        // 该位置已经用原文占位过，但它是「有效回应」，计入已解决
+        filled++;
+      }
     });
   }
 
