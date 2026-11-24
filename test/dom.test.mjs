@@ -591,6 +591,31 @@ test("属性翻译：应用后还原逐字节一致", () => {
   assert.equal(win.document.getElementById("d").innerHTML, original, "还原必须逐字节一致");
 });
 
+test("批量属性回填：重复文案只扫描一次同标签节点，并保留各自的还原位置", () => {
+  const { api, win } = load(`<body>${'<p title="Open help">Read the guide.</p>'.repeat(200)}</body>`);
+  const doc = win.document;
+  const entries = api.collectAttributeTexts(doc.body, "zh-CN");
+  const getByTag = doc.getElementsByTagName.bind(doc);
+  let scans = 0;
+  doc.getElementsByTagName = tag => {
+    if (tag === "p") scans++;
+    return getByTag(tag);
+  };
+  const saved = [];
+  assert.equal(api.applyAttributeTexts(entries, new Map([["Open help", "打开帮助"]]), saved), 200);
+  assert.equal(scans, 1, "同一批次不应为每个属性重复扫描文档");
+  assert.deepEqual(
+    saved.map(item => item.ordinal),
+    Array.from({ length: 200 }, (_, index) => index)
+  );
+  const translatedHtml = doc.body.innerHTML;
+  doc.body.innerHTML = translatedHtml;
+  scans = 0;
+  api.restoreAttributeTexts(saved);
+  assert.equal(scans, 1, "节点被重建后，同一标签也只应扫描一次");
+  assert.equal(doc.querySelectorAll('p[title="Open help"]').length, 200);
+});
+
 test("属性已是目标语言时不采集（中文 title 不再翻）", () => {
   const { api, win } = load(`<html lang="zh-CN"><body><a href="/x" title="打开设置面板">设置</a></body></html>`);
   const entries = api.collectAttributeTexts(win.document.body, "zh-CN");

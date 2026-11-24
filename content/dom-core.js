@@ -1195,9 +1195,9 @@
    * @param {string} targetLanguage 目标语言
    * @return {Array<{element: Element, attr: string, text: string}>} 待翻译属性
    */
-  function collectAttributeTexts(root, targetLanguage) {
+  function collectAttributeTexts(root, targetLanguage, translatedElements) {
     const found = [];
-    const seen = new Set();
+    // 保留每个属性槽位；传入引擎的文本在请求层去重。
     const base = root || (typeof document !== "undefined" ? document.body : null);
     if (!base || !base.querySelectorAll) return found;
 
@@ -1209,7 +1209,9 @@
       // 属性扫描只看「是不是确实不可见」和「是不是脚本/样式」。
       const tag = element.tagName.toLowerCase();
       if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") continue;
-      if (element.matches && element.matches('[translate="no"], .notranslate, [aria-hidden="true"]')) continue;
+      if (element.matches('[translate="no"], [aria-hidden="true"]')) continue;
+      // 正文回填会自行加 .notranslate；它不应拦住同一单元的属性翻译。
+      if (element.classList.contains("notranslate") && !translatedElements?.has(element)) continue;
       if (element.closest && element.closest("svg")) continue;
       for (const attr of TRANSLATABLE_ATTRS) {
         const raw = element.getAttribute && element.getAttribute(attr);
@@ -1220,9 +1222,6 @@
         if (isAlreadyTarget(text, targetLanguage)) continue;
         // 文件名/日期/版本号/统计占比：翻不出有意义的结果，只会白白拖慢首屏
         if (isIdentifierAttr(text)) continue;
-        const key = attr + "::" + text;
-        if (seen.has(key)) continue;
-        seen.add(key);
         found.push({ element, attr, text });
       }
     }
@@ -1238,6 +1237,8 @@
    */
   function applyAttributeTexts(entries, translated, saved) {
     if (!entries || !translated || translated.size === 0) return 0;
+    // 每次回填对同一标签只建立一次位置索引，避免逐属性扫描整份文档。
+    const ordinalsByTag = new Map();
     let applied = 0;
     for (const entry of entries) {
       const next = translated.get(entry.text);
@@ -1257,9 +1258,16 @@
           ordinal: -1,
         });
         const record = saved[saved.length - 1];
-        if (record.tag && typeof document !== "undefined" && document.querySelectorAll) {
-          const sameTag = Array.from(document.getElementsByTagName(record.tag));
-          record.ordinal = sameTag.indexOf(entry.element);
+        if (record.tag && typeof document !== "undefined" && document.getElementsByTagName) {
+          if (!ordinalsByTag.has(record.tag)) {
+            const ordinals = new Map();
+            const sameTag = document.getElementsByTagName(record.tag);
+            for (let index = 0, length = sameTag.length; index < length; index++) {
+              ordinals.set(sameTag[index], index);
+            }
+            ordinalsByTag.set(record.tag, ordinals);
+          }
+          record.ordinal = ordinalsByTag.get(record.tag).get(entry.element) ?? -1;
         }
       }
       entry.element.setAttribute(entry.attr, next);
@@ -1276,13 +1284,17 @@
    */
   function restoreAttributeTexts(saved, resolveElement) {
     if (!saved) return;
+    const elementsByTag = new Map();
     for (const item of saved) {
       try {
         // 解析顺序：调用方给的溯源函数 → 原引用（仍在文档中）→ 按 tag+序号重新定位
         let target = resolveElement ? resolveElement(item) : item.element;
         if (!target || target.isConnected === false) {
           if (item.tag && typeof document !== "undefined" && document.getElementsByTagName) {
-            const sameTag = Array.from(document.getElementsByTagName(item.tag));
+            if (!elementsByTag.has(item.tag)) {
+              elementsByTag.set(item.tag, Array.from(document.getElementsByTagName(item.tag)));
+            }
+            const sameTag = elementsByTag.get(item.tag);
             if (item.ordinal >= 0 && item.ordinal < sameTag.length) target = sameTag[item.ordinal];
           }
         }

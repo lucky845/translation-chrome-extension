@@ -129,6 +129,92 @@ await test("创建失败不缓存失败态：下次仍会重试", async () => {
   assert.equal(creates, 2);
 });
 
+await test("同一文档内重复纯文本复用端侧译文，不跨语言对或文档", async () => {
+  let calls = 0;
+  const stub = {
+    availability: async () => "available",
+    create: async ({ targetLanguage }) => ({
+      translate: async text => `${targetLanguage}:${text}:${++calls}`,
+    }),
+  };
+  const first = load(stub).__TP_OFFLINE__;
+  const result = await first.translate(["Open settings", " Open settings "], "en", "zh-CN");
+  assert.equal(result[0].text, result[1].text);
+  assert.equal(calls, 1);
+  assert.equal((await first.translate(["Open settings"], "en", "ja"))[0].text, "ja:Open settings:2");
+  assert.equal(
+    (await load(stub).__TP_OFFLINE__.translate(["Open settings"], "en", "zh-CN"))[0].text,
+    "zh:Open settings:3"
+  );
+});
+
+await test("同一文档并发请求相同文案时只启动一次端侧推理", async () => {
+  let calls = 0;
+  let finish;
+  const pending = new Promise(resolve => (finish = resolve));
+  const { window } = load(
+    mockTranslator({
+      create: async () => ({
+        translate: () => {
+          calls++;
+          return pending;
+        },
+      }),
+    })
+  );
+  const api = window.__TP_OFFLINE__;
+  const first = api.translate(["Open the guide"], "auto", "zh-CN");
+  const second = api.translate([" Open the guide "], "en", "zh");
+  finish("打开指南");
+  const [one, two] = await Promise.all([first, second]);
+  assert.equal(calls, 1);
+  assert.equal(one[0].text, "打开指南");
+  assert.equal(two[0].text, "打开指南");
+  window.close();
+});
+
+await test("并发端侧推理失败后不会阻止下次重试", async () => {
+  let calls = 0;
+  const { window } = load(
+    mockTranslator({
+      create: async () => ({
+        translate: async () => {
+          if (++calls === 1) throw new Error("temporary inference failure");
+          return "恢复成功";
+        },
+      }),
+    })
+  );
+  const api = window.__TP_OFFLINE__;
+  const attempt = () => api.translate(["Try again"], "en", "zh");
+  const results = await Promise.allSettled([attempt(), attempt()]);
+  assert.deepEqual(
+    results.map(result => result.status),
+    ["rejected", "rejected"]
+  );
+  assert.equal(calls, 1);
+  assert.equal((await attempt())[0].text, "恢复成功");
+  assert.equal(calls, 2);
+  window.close();
+});
+
+await test("端侧原样回传和未经校验的占位符译文不缓存", async () => {
+  const calls = [];
+  const window = load({
+    availability: async () => "available",
+    create: async () => ({
+      translate: async text => {
+        calls.push(text);
+        return text === "Unchanged" ? text : `译[${text}]`;
+      },
+    }),
+  });
+  const texts = ["Unchanged", "Read <a i=0>guide</a>", "Read {{0}}guide{{/0}}"];
+  await window.__TP_OFFLINE__.translate(texts, "en", "zh");
+  await window.__TP_OFFLINE__.translate(texts, "en", "zh");
+  assert.deepEqual(calls, [...texts, ...texts]);
+});
+
 await test("翻译失败时保留原始 error 作为 cause（排查要能拿到真实堆栈）", async () => {
   const boom = new Error("Requires a user gesture");
   const { window } = load(
