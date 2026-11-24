@@ -289,31 +289,27 @@
           }
         }
 
-        // 属性文本**不阻塞**正文：两者各走一次网络请求，串行会白白多付一个 RTT
-        // （真机实测：属性 103 条时，整页第一段译文要等到 8.2 秒才出现）。
-        // 但属性的 APPLICATION 仍必须等正文应用完——正文应用会把内联元素
-        // cloneNode(false) 重建，原元素脱离文档，此刻写 setAttribute 写的是
-        // 屏幕上已经看不到的旧节点（真机实测：<p> 里的 <img alt="tower">
-        // 翻完后 alt 仍是英文）。所以这里只并行「请求」，应用放到正文之后。
+        // 属性文本必须先于正文翻译：内联元素（<img alt>、<a title> 等）在正文
+        // 译文应用时会被 cloneNode(false) 重建，原元素随即脱离文档；若此时才写
+        // setAttribute，改的是已脱离的旧节点，可见的克隆体仍保留旧属性
+        // （真机实测：<p> 里的 <img alt="tower"> 翻完后 alt 仍是英文）。
         // 失败不影响整体结果——tooltip 翻不了不该让整页判定为失败。
-        const attrPromise =
-          this.attributeEntries.length > 0 ? this.translateAttributes(from, target).catch(() => 0) : Promise.resolve(0);
+        if (this.attributeEntries.length > 0) {
+          try {
+            await this.translateAttributes(from, target);
+          } catch {
+            // 属性翻译失败静默降级，正文译文保留
+          }
+        }
 
         const remaining = this.units.filter(unit => !unit.translated);
         let failedCount = 0;
         if (remaining.length > 0) {
-          applied += await this.translateUnits(remaining, target, {
-            lazy: settings.lazyTranslate !== "off",
-            // 正文批次并行：2 批在途，把「发一批等一批」的串行 RTT 叠起来。
-            maxInflight: 2,
-          });
+          applied += await this.translateUnits(remaining, target, { lazy: settings.lazyTranslate !== "off" });
           // 重试后仍然失败的段数：必须如实上报，不能让「翻了一半」冒充「翻译完成」
           failedCount = this.failedCount || 0;
           this.failedCount = 0;
         }
-
-        // 正文应用完毕，内联元素的克隆体已经就位，此时写属性才落在活节点上。
-        await attrPromise;
 
         this.hideIndicator();
 
@@ -522,10 +518,6 @@
      */
     async translateUnits(units, target, options = {}) {
       const lazy = options.lazy !== false;
-      // 并行在途的正文批次数。旧实现是「发一批 → 等回来 → 应用 → 发下一批」，
-      // 每批都要吃满一次网络往返；整页 4 批就串成 4 个 RTT。
-      // 现在最多同时挂 2 批，后一批的译文在后台返回、下一次轮到它时才应用。
-      const maxInflight = Math.max(1, options.maxInflight || 1);
       let applied = 0;
       const pending = units.slice();
       const order = new Map(units.map((unit, index) => [unit, index]));
@@ -610,8 +602,6 @@
       const failed = [];
       /** 连续失败批次数：达到上限就收工，不在原地死磕 */
       let consecutiveFails = 0;
-      /** 在途的批次请求（Promise），按发出顺序结算；长度不超过 maxInflight */
-      const inflight = [];
       /** 最近一次批次的失败原因，用于如实上报（不猜原因） */
       let lastFailure;
       const idleFor = () => Date.now() - lastScrollAt;
@@ -642,16 +632,8 @@
         // 页面本身在动），idleFor() 永远重置，pending 空、deferred 非空，
         // 循环就永远不退出 —— 表现是页面已经全部翻完，弹窗却一直显示
         // 「翻译中…172/172」，「显示原文」按钮也点不动（state 还是 translating）。
-        //
-        // inflight 也必须算进退出条件：并行之后，最后一批发出时 pending 就空了，
-        // 但它的结果还在路上。只看 pending/deferred 会让循环提前退出，
-        // 那批译文再也不会被应用（真机回归：200 段只翻 141 段）。
-        const hasWork = () => pending.length > 0 || deferred.length > 0 || inflight.length > 0;
-        while (hasWork() && this.state !== "idle" && !this.restoring) {
-          if (pending.length === 0 && deferred.length === 0) {
-            // 只剩在途批次：直接往下走，把最早那批结算并应用。
-            // 这里不能 break —— break 会把在途结果晾在半空。
-          } else if (pending.length === 0) {
+        while ((pending.length > 0 || deferred.length > 0) && this.state !== "idle" && !this.restoring) {
+          if (pending.length === 0) {
             // 视口内暂时没有待翻内容：等用户滚动或等空闲，再唤醒远端单元。
             // 注意 pending 已经没有可翻的了，空转只会烧 CPU，
             // 所以这里要么等到有新内容，要么等到 idle 足够久把远端拉回来。
@@ -690,24 +672,10 @@
             pending.splice(0, pending.length, ...ready);
           }
           if (pending.length === 0) {
-            // 队列空了，但在途批次可能还没回来。
-            //
-            // 关键：这里**不能**自己结算——结算（shift + await）和「把译文
-            // 写进 DOM」是同一段逻辑，分开写就会走到「只结算不应用」的死角：
-            // 上一版在这里 await 完直接 continue，第二批的 59 段译文被
-            // shift 走却从没 apply，页面只翻了一部分（真机回归：200 段翻 80 段）。
-            //
-            // 所以只做一件事：轮到结算了就让下面那段统一走一遍。条件与
-            // 主路径末尾的「立即结算」保持一致——pending 已空，不再有下一批
-            // 可发，直接结算即可。
-            if (inflight.length === 0) {
-              // 既没有待翻、也没有在途：这一轮确实没活了。
-              // 必须让出一次事件循环，否则 while 立刻回到顶部、再次走到这里，
-              // 形成不带 await 的忙循环，把主线程烧干。
-              await delay(SCROLL_DEBOUNCE_MS);
-            }
-            // 落到下面：pending 为空时 batch/plan 也是空的，
-            // 不会再发请求，只会把在途的那一批结算并应用掉。
+            // 这一轮全是远端。必须让出一次事件循环，否则 while 立刻回到顶部、
+            // 再次走到这里，形成不带 await 的忙循环，把主线程烧干。
+            await delay(SCROLL_DEBOUNCE_MS);
+            continue;
           }
 
           // 每轮重排：用户滚到哪，哪里的内容就先翻
@@ -716,7 +684,7 @@
 
           // 长单元切成多片再送：单条 3000 字的长段落直接发给 MyMemory（上限 450）
           // 必然失败，降级链一路走到最后，用户看到「一直失败」。
-          // 切分感知占位符，绝不把 <a i=N>…</a> 拆到两片里。
+          // 切分感知占位符，绝不把 <0>…</0> 拆到两片里。
           const requests = [];
           const plan = batch.map(unit => {
             const parts = splitForEngine(unit.text, MAX_UNIT_CHARS);
@@ -725,30 +693,11 @@
             return { unit, start, count: parts.length };
           });
 
-          // 并行：把这一批挂上去，不等它回来。
-          // inflight 里放的是「已发出但还没应用」的批，按发出顺序结算——
-          // 先发的批次先应用，视口内的内容永远比远端更早出现在屏幕上。
-          //
-          // 每笔都带上自己的 plan / batch：结算时必须应用**那一批**的 plan，
-          // 而不是循环里当下的 plan / batch。之前少了这层绑定，第二批发出去
-          // 之后 await 到的是第一批，结算完 continue 回去，第二批结果被晾在
-          // inflight 里从未应用——页面只翻了一部分（真机回归：200 段只翻 80 段）。
-          //
-          // batch 为空时不发请求：此时唯一要做的是把在途那批结算掉。
-          if (batch.length > 0) {
-            inflight.push({
-              plan,
-              batch,
-              promise: sendMessage({ action: "translateBatch", texts: requests, targetLanguage: target }),
-            });
-            // 还没攒够并行额度、队列里又有活：立刻发下一批，不在这里等。
-            if (pending.length > 0 && inflight.length < maxInflight) continue;
-          }
-
-          // 结算并应用最早发出的那一批
-          if (inflight.length === 0) continue;
-          const job = inflight.shift();
-          const response = await job.promise;
+          const response = await sendMessage({
+            action: "translateBatch",
+            texts: requests,
+            targetLanguage: target,
+          });
 
           if (response && response.degraded) {
             this.degraded = true;
@@ -766,7 +715,7 @@
             // 失败批次不能就这么丢掉：用户看到的会是「翻译完成，但一半还是英文」。
             // 收进 failed，循环结束后统一重试一轮。
             lastFailure = (response && response.error) || "翻译请求失败";
-            failed.push(...job.batch);
+            failed.push(...batch);
             // 连续失败就早点收工，免得用户在原地干等。
             // 但提示必须如实：这里只知道「连续几个批次没拿到有效响应」，
             // 不知道原因。旧的文案写死了「多为限流」——HAR 实测过 17 条请求
@@ -787,7 +736,7 @@
           const results = response.results || [];
           const whole = [];
           const fallback = [];
-          job.plan.forEach(item => {
+          plan.forEach(item => {
             const unit = item.unit;
             // 把该单元的各片译文按序拼回一条：分片只是为了绕过单条上限，
             // 还原阶段仍按「一个单元一份译文」处理，占位符校验照旧。
