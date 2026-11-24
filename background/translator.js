@@ -27,6 +27,31 @@ function cacheKey(from, to, text) {
 }
 
 /**
+ * 判断引擎是否「原样退回」了原文。
+ *
+ * 为什么需要这个判断：Google 在 sl=auto 时会把「英文为主、夹少量中文专名」
+ * 的段落检测成中文，直接返回原文。这不是错误码，HTTP 200、条数也对，
+ * 单看返回结构完全正常——但内容是错的。
+ *
+ * 更糟的是旧实现把这种返回当成功写进缓存，于是这段文字在整个 service worker
+ * 生命周期内都判定为「已翻译」，用户刷新多少次都翻不出来（HAR 实证过一次
+ * 翻译都没重发）。所以这里必须把它识别出来：不进缓存，并让上层回落原文。
+ *
+ * 判据刻意保守——只认「逐字符相同」这一种情形，不做语言推断。
+ * 上一轮试过按字符比例猜源语言重发，结果把本来就是中文的句子按英文重翻
+ * （HAR 里能直接看到），比不翻更糟。这里宁可不救，也不错误地救。
+ *
+ * @param {string} source 原文
+ * @param {string} output 引擎返回
+ * @return {boolean} 是否为原样退回
+ */
+function isEcho(source, output) {
+  if (typeof source !== "string" || typeof output !== "string") return false;
+  if (source === "" || output === "") return false;
+  return source.trim() === output.trim();
+}
+
+/**
  * 写入缓存，超限时淘汰最旧条目（Map 保证插入顺序）。
  * @param {string} key 键
  * @param {{text: string, detected: ?string}} value 值
@@ -108,8 +133,16 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
   }
 
   // 3. 回填：同一文本的所有出现位置共享同一个结果对象，单次遍历完成
+  //
+  // echo 结果（引擎原样退回）必须挡在这里，不能写缓存：
+  // 一旦写进去，这段文字在 SW 生命周期内永远命中缓存，用户怎么刷新都翻不出来。
+  // 不写缓存的代价只是下次再发一次请求，代价远小于「永久翻不出来」。
+  /** @type {Set<number>} */
+  const echoed = new Set();
   if (translated) {
     translated.forEach((item, missIndex) => {
+      // echo：不是译文，不写缓存、也不填充 results
+      if (isEcho(misses[missIndex], item.text)) return;
       const key = missKeys[missIndex];
       const value = { text: item.text, detected: item.detected };
       cachePut(key, value);
@@ -120,8 +153,14 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     });
   }
 
-  // 4. 兜底：未填充的位置用原文占位（不写缓存，避免把「翻译失败」污染成缓存命中）
+  // 4. 兜底：未填充的位置用原文占位。
+  // 这些位置分两种，对上层意义完全不同，必须分开数：
+  //  - echo（引擎回了但内容就是原文）→ 确定性结果，重发无意义；
+  //  - 失败（请求没成功）→ 值得重试。
+  // 混成「没翻成」上报会让上层对 echo 白重发一轮，还会把提示误报成限流/网络波动。
   let filled = 0;
+  /** @type {Set<number>} */
+  const echoUnitSeen = new Set();
   for (let index = 0; index < results.length; index++) {
     if (results[index]) {
       filled++;
@@ -130,9 +169,20 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     results[index] = { text: texts[index], detected: null };
   }
 
-  // ok 的语义是「这批文本有没有拿到译文」，不是「有没有真的发出请求」。
-  // 纯缓存命中时 translated 为 null 但结果齐全；反之请求成功也可能有段落回落原文。
-  // 以「实际填充了多少」为准，才不会把缓存命中误报成请求失败。
+  // 把 echo 的 miss 索引映射回输出位置（含批内重复文本的全部位置）
+  if (translated) {
+    translated.forEach((item, missIndex) => {
+      if (!isEcho(misses[missIndex], item.text)) return;
+      echoed.add(missIndex);
+      const slots = positions.get(missKeys[missIndex]) || [];
+      for (const slot of slots) echoUnitSeen.add(slot);
+      if (slots.length > 0) filled++;
+    });
+  }
+
+  // ok 的语义是「这批文本有没有拿到回应」，不是「有没有拿到译文」：
+  // echo 也是回应（引擎明确表示「这就是目标语言」），算进来才不会让上层
+  // 把它当失败重发。真正没拿到回应的位置仍然算失败，仍会进重试队列。
   const ok = filled === texts.length;
 
   return {
@@ -140,6 +190,7 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     results,
     engine: usedEngine,
     degraded,
+    echoed: echoUnitSeen.size,
     error: ok ? errorMessage : errorMessage || `仅 ${filled}/${texts.length} 段获得译文`,
   };
 }

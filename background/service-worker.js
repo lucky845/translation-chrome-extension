@@ -55,6 +55,7 @@ const handlers = {
       results: outcome.results,
       engine: outcome.engine,
       degraded: outcome.degraded,
+      echoed: outcome.echoed || 0,
       error: outcome.error,
     };
   },

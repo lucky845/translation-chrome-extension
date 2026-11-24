@@ -342,6 +342,20 @@
           return { success: true, count: applied, elapsed, failed: failedCount, error: this.lastError };
         }
 
+        // echo 与「失败」不同：引擎确实回了、条数也对，但内容是原文
+        // （Google 把「英文夹中文专名」的段落判成中文时就是这样）。
+        // 重试没有意义——同样的输入永远同样的返回，所以不报「失败」让用户白重翻，
+        // 但要如实说清楚有几段是这样，否则用户只会看到「翻译完成」却发现没翻。
+        if (this.echoed > 0) {
+          const echoCount = this.echoed;
+          this.echoed = 0;
+          this.lastError = `有 ${echoCount} 段被引擎判定为「已是目标语言」而保持原文，多为中英混排的段落`;
+          this.showIndicator(`已翻译 ${applied} 段 · ${echoCount} 段保持原文`, true);
+          setTimeout(() => this.hideIndicator(), 4000);
+          return { success: true, count: applied, elapsed, error: this.lastError };
+        }
+        this.echoed = 0;
+
         this.showIndicator(`已翻译 ${applied} 段 · ${(applied / (elapsed / 1000)).toFixed(1)} 段/秒`, true);
         setTimeout(() => this.hideIndicator(), 2500);
         return { success: true, count: applied, elapsed };
@@ -686,6 +700,12 @@
           if (response && response.degraded) {
             this.degraded = true;
             this.lastError = response.error || this.lastError;
+          }
+          // echoed：引擎把原文原样退了回来（典型是 Google 把「英文夹中文专名」
+          // 的段落判成中文）。这类结果不会写缓存，但保留原文，不当作错误，
+          // 只记下来让最终提示能说清原因，而不是含糊地说「部分段落未翻译」。
+          if (response && response.echoed > 0) {
+            this.echoed = (this.echoed || 0) + response.echoed;
           }
 
           if (!response || !response.ok) {

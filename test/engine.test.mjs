@@ -354,6 +354,100 @@ await test("缓存：恢复后再次翻译全部命中缓存，必须返回 ok �
   clearCache();
 });
 
+await test("echo：引擎原样退回的结果不得写入缓存，且必须回报 echoed", async () => {
+  // 真机 HAR 实证：Google 在 sl=auto 时把「英文夹中文专名」的段落判成中文，
+  // 直接返回原文——HTTP 200、条数也对，结构完全正常，但内容是错的。
+  // 旧实现把它当成功写缓存，这段文字在 SW 生命周期内永远算「已翻译」，
+  // 用户刷新多少次都翻不出来。这条断言锁死「不许写缓存 + 必须上报」。
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  const echoSource = "A small DSH bundle that adds Cabinet Mode (内阁模式) to DeepSeek Harness.";
+  let calls = 0;
+  await withMockFetch(
+    (url, init) => {
+      calls += 1;
+      const body = init && init.body ? JSON.parse(init.body) : null;
+      const texts = body ? body[0][0] : [];
+      // 原样退回：忠实复现服务端的行为
+      return new Response(JSON.stringify([texts.slice()]), { status: 200 });
+    },
+    async () => {
+      const first = await translateTexts([echoSource], "auto", "zh-CN", "google");
+      assert.equal(first.ok, true, "有返回就不算请求失败");
+      assert.equal(first.echoed, 1, "必须回报有一段是 echo");
+      assert.equal(first.results[0].text, echoSource, "echo 时保留原文");
+
+      // 关键：再翻一次必须**重新发请求**，否则说明被写进缓存了
+      const callsAfterFirst = calls;
+      const second = await translateTexts([echoSource], "auto", "zh-CN", "google");
+      assert.equal(calls, callsAfterFirst + 1, "echo 结果不得进缓存，必须重新请求");
+      assert.equal(second.echoed, 1, "第二次仍应如实回报 echo");
+    }
+  );
+  clearCache();
+});
+
+await test("echo：真译文必须写缓存，不能被 echo 判定误伤", async () => {
+  // echo 判定不能把正常翻译也挡在缓存外，否则每次翻同一段都要多付一次请求。
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response(JSON.stringify([["真正的译文"]]), { status: 200 });
+    },
+    async () => {
+      const first = await translateTexts(["real english text"], "auto", "zh-CN", "google");
+      assert.equal(first.echoed, 0, "真译文不应被计入 echo");
+      assert.equal(first.results[0].text, "真正的译文");
+
+      const callsAfterFirst = calls;
+      const second = await translateTexts(["real english text"], "auto", "zh-CN", "google");
+      assert.equal(calls, callsAfterFirst, "真译文必须命中缓存，不得重发");
+      assert.equal(second.echoed, 0);
+    }
+  );
+  clearCache();
+});
+
+await test("echo：判定只认逐字符相同，不做语言推断", async () => {
+  // 上一轮曾按字符比例猜源语言重发，把中文句子按英文重翻，比不翻更糟。
+  // 这条断言锁死「只认完全相同」——差一个字符都不算 echo。
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  await withMockFetch(
+    () => new Response(JSON.stringify([["中文译文。"]]), { status: 200 }),
+    async () => {
+      // 返回和原文不同（哪怕只差标点）就不是 echo
+      const outcome = await translateTexts(["中文原文"], "auto", "zh-CN", "google");
+      assert.equal(outcome.echoed, 0, "内容不同不应判为 echo");
+    }
+  );
+  clearCache();
+});
+
 await test("缓存：翻译失败的结果不得写入缓存（否则永久卡在原文）", async () => {
   globalThis.chrome = {
     storage: {
