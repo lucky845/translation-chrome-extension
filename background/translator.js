@@ -12,6 +12,36 @@ import { getSettings } from "./settings.js";
 
 const CACHE_LIMIT = 5000;
 
+/**
+ * translateHtml 的占位符：`<a i=0>…</a>`（成对）与 `<a i=0/>`（自闭合）。
+ * 与 content/dom-core.js 的 PLACEHOLDER_STRIP_RE 保持一致。
+ */
+const PLACEHOLDER_RE = /<a i=\d+\/>|<\/a>|<a i=\d+>/g;
+
+/**
+ * 取一段文本的「内容指纹」：剥掉占位符，删去全部空白。
+ *
+ * 用于判断原文与引擎返回是否实质相同。两处归一都不能省：
+ *
+ *   剥占位符——`<a i=3>DeepSeek Harness</a>.` 与 `<a i=3>DeepSeek Harness</a> .`
+ *   剥掉标签后都是 `DeepSeek Harness.` / `DeepSeek Harness .`，才可比。
+ *
+ *   删全部空白——只做「连续空白归一成单个空格」还不够。原文
+ *   `pick <a i=4>内阁模式</a> when` 剥标签后是 `pick 内阁模式 when`，
+ *   引擎返回 `pick<a i=4>内阁模式</a>when` 剥标签后是 `pick内阁模式when`：
+ *   中英文之间的空格被吃掉后，两边字面不同，但读者看到的内容一模一样。
+ *   删掉空白后两者都是 `pick内阁模式when`，这才反映真实语义。
+ *
+ * 这个判据只回答「是不是同一段文字」，不回答「这段文字该不该翻译」，
+ * 所以对任何语言都成立，不需要做语言推断。
+ *
+ * @param {string} text 文本
+ * @return {string} 内容指纹
+ */
+function contentKey(text) {
+  return text.replace(PLACEHOLDER_RE, "").replace(/\s+/g, "");
+}
+
 /** @type {Map<string, {text: string, detected: ?string}>} */
 const cache = new Map();
 
@@ -37,9 +67,21 @@ function cacheKey(from, to, text) {
  * 生命周期内都判定为「已翻译」，用户刷新多少次都翻不出来（HAR 实证过一次
  * 翻译都没重发）。所以这里必须把它识别出来：不进缓存，并让上层回落原文。
  *
- * 判据刻意保守——只认「逐字符相同」这一种情形，不做语言推断。
- * 上一轮试过按字符比例猜源语言重发，结果把本来就是中文的句子按英文重翻
- * （HAR 里能直接看到），比不翻更糟。这里宁可不救，也不错误地救。
+ * 判据：剥掉占位符、删去全部空白后，两段文字完全相同。
+ *
+ * 为什么不能用简单的 trim() 比较：Google 在退回原文时会顺手调整占位符周围的
+ * 空格。HAR 实证（426 字符 → 425 字符，21 个汉字、52 个英文词一个没变）：
+ *
+ *   `Harness</a>.`  →  `Harness</a> .`     句号前多一个空格
+ *   `pick <a i=4>内阁模式</a> when`
+ *                 →  `pick<a i=4>内阁模式</a>when`   两侧空格被吃掉
+ *
+ * trim() 只去首尾，对中间的空格变化视而不见，于是这种伪译文被当成真译文放行，
+ * 写进缓存 + 标记已翻译，那段文字就永远不再重试——这正是用户反复看到
+ * 「这一段没翻译」的直接原因。
+ *
+ * 仍然刻意不做语言推断（不按字符比例猜源/目标语言）：上一轮试过，
+ * 把本来就是中文的句子按英文重翻（HAR 里能直接看到），比不翻更糟。
  *
  * @param {string} source 原文
  * @param {string} output 引擎返回
@@ -47,8 +89,8 @@ function cacheKey(from, to, text) {
  */
 function isEcho(source, output) {
   if (typeof source !== "string" || typeof output !== "string") return false;
-  if (source === "" || output === "") return false;
-  return source.trim() === output.trim();
+  if (!source || !output) return false;
+  return contentKey(source) === contentKey(output);
 }
 
 /**
