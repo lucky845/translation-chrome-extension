@@ -47,22 +47,28 @@ function test(name, fn) {
 console.log("\n[1] 占位符解析");
 test("解析成对占位符", () => {
   const { api } = load("<div></div>");
-  const pieces = api.parsePlaceholders("在<1>开始</1>之前阅读<0>官方文档</0>。");
+  const pieces = api.parsePlaceholders("在<a i=1>开始</a>之前阅读<a i=0>官方文档</a>。");
   assert.equal(pieces.filter(p => p.type === "open").length, 2);
   assert.equal(pieces.filter(p => p.type === "close").length, 2);
 });
 
 test("解析自闭合占位符", () => {
   const { api } = load("<div></div>");
-  const pieces = api.parsePlaceholders("请参阅下图表<0/>了解数据。");
+  const pieces = api.parsePlaceholders("请参阅下图表<a i=0/>了解数据。");
   assert.equal(pieces.filter(p => p.type === "void").length, 1);
 });
 
 test("占位符不平衡时返回 null（拒绝生成错乱 DOM）", () => {
   const { api } = load("<div></div>");
-  assert.equal(api.parsePlaceholders("在<1>开始之前"), null, "缺闭合应返回 null");
-  assert.equal(api.parsePlaceholders("多余的</2>闭合"), null, "多余闭合应返回 null");
-  assert.equal(api.parsePlaceholders("交叉嵌套<0><1></0></1>"), null, "交叉嵌套应返回 null");
+  assert.equal(api.parsePlaceholders("在<a i=1>开始之前"), null, "缺闭合应返回 null");
+  assert.equal(api.parsePlaceholders("多余的</a>闭合"), null, "多余闭合应返回 null");
+  // `<a i=N>` / `</a>` 语法里闭合标签不带编号，只能按栈配对，
+  // 所以「交叉嵌套」在语法层面无法表达。这里改为断言**未闭合**仍被拒：
+  // 两个 open 只有一个 close，栈不空 → null。真正的交叉错误由
+  // buildFragment 的 id 校验兜住（见 [1] 的 apply 用例）。
+  assert.equal(api.parsePlaceholders("<a i=0>外<a i=1>内</a>"), null, "有 open 没闭合应返回 null");
+  // 合法的嵌套必须通过，否则等于把正常译文也拒了
+  assert.notEqual(api.parsePlaceholders("<a i=0>外<a i=1>内</a></a>"), null, "合法嵌套应通过");
 });
 
 console.log("\n[2] 翻译单元采集");
@@ -72,15 +78,15 @@ test("整段含内联标签编码为单一单元（不拆碎句子）", () => {
   );
   const units = api.collectUnits(win.document.body);
   assert.equal(units.length, 1, `应只有 1 个单元，实际 ${units.length}`);
-  assert.match(units[0].text, /<0>official docs<\/0>/);
-  assert.match(units[0].text, /<1>start<\/1>/);
+  assert.match(units[0].text, /<a i=0>official docs<\/a>/);
+  assert.match(units[0].text, /<a i=1>start<\/a>/);
 });
 
 test("无文本内联元素编码为自闭合占位符", () => {
   const { api, win } = load(`<html lang="en"><body><p id="p">Click <img src="a.png"> to continue.</p></body></html>`);
   const units = api.collectUnits(win.document.body);
   assert.equal(units.length, 1);
-  assert.match(units[0].text, /<0\/>/);
+  assert.match(units[0].text, /<a i=0\/>/);
 });
 
 test("脚本/样式/表单控件被跳过", () => {
@@ -164,7 +170,7 @@ test("无子元素的自定义标签仍按内联处理（自闭合占位）", ()
   const { api, win } = load(`<html lang="en"><body><p>Before <x-icon></x-icon> after.</p></body></html>`);
   const units = api.collectUnits(win.document.body);
   assert.equal(units.length, 1);
-  assert.match(units[0].text, /<0\/>/, "空自定义标签应变成自闭合占位符");
+  assert.match(units[0].text, /<a i=0\/>/, "空自定义标签应变成自闭合占位符");
 });
 
 test("turbo-frame / 嵌套自定义元素都能被穿透", () => {
@@ -186,7 +192,7 @@ test("内联标签在译文语序中被保留", () => {
     `<html lang="en"><body><p id="p">Read the <a href="/docs" class="link">official docs</a> before you <b>start</b>.</p></body></html>`
   );
   const units = api.collectUnits(win.document.body);
-  const ok = units[0].apply("在<1>开始</1>之前阅读<0>官方文档</0>。");
+  const ok = units[0].apply("在<a i=1>开始</a>之前阅读<a i=0>官方文档</a>。");
   assert.equal(ok, true, "apply 应成功");
   const p = win.document.getElementById("p");
   assert.equal(p.textContent, "在开始之前阅读官方文档。");
@@ -205,7 +211,7 @@ test("自闭合占位符保留 void 元素", () => {
     `<html lang="en"><body><p id="p">Click <img src="a.png" alt="icon"> to continue.</p></body></html>`
   );
   const units = api.collectUnits(win.document.body);
-  assert.equal(units[0].apply("单击<0/>继续。"), true);
+  assert.equal(units[0].apply("单击<a i=0/>继续。"), true);
   const img = win.document.getElementById("p").querySelector("img");
   assert.ok(img, "img 应被保留");
   assert.equal(img.getAttribute("src"), "a.png");
@@ -336,7 +342,7 @@ test("深层单元恢复为原始 HTML", () => {
   );
   const original = win.document.body.innerHTML;
   const units = api.collectUnits(win.document.body);
-  units[0].apply("在<1>开始</1>之前阅读<0>官方文档</0>。");
+  units[0].apply("在<a i=1>开始</a>之前阅读<a i=0>官方文档</a>。");
   const restored = units[0].restore();
   assert.equal(restored, true);
   assert.equal(win.document.body.innerHTML, original, "必须逐字节还原");
@@ -533,7 +539,7 @@ test("P1-1 display:block 的 strong 是独立块，不与正文合并", () => {
   );
   const units = api.collectUnits(win.document.body);
   const texts = units.map(u => u.text).join("|");
-  assert.ok(!texts.includes("<0>A big claim</0>"), `块级 strong 不该变占位符，实际: ${texts}`);
+  assert.ok(!texts.includes("<a i=0>A big claim</a>"), `块级 strong 不该变占位符，实际: ${texts}`);
   assert.ok(
     units.some(u => u.text === "A big claim"),
     `应有独立单元，实际: ${texts}`

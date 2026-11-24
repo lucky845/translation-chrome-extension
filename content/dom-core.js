@@ -10,9 +10,12 @@
  *   中文语序必然错乱（"阅读官方文档在开始之前"）。必须把整段作为一个翻译单元，
  *   把内联标签编码成占位符，翻译后再按译文顺序还原成真实标签。
  *
- * 占位符格式：`<N>...</N>`（成对）与 `<N/>`（自闭合）。实测 Google 原样保留并按目标语序重排：
- *   `Read the <0>official docs</0> before you <1>start</1>.`
- *   → `在<1>开始</1>之前阅读<0>官方文档</0>。`
+ * 占位符格式：`<a i=N>...</a>`（成对）与 `<a i=N/>`（自闭合）。
+ *   这是 translateHtml 端点（Chrome 自带翻译同款）认识的语法，实测原样保留并按目标语序重排：
+ *   `Read the <a i=0>official docs</a> before you <a i=1>start</a>.`
+ *   → `在<a i=1>开始</a>之前阅读<a i=0>官方文档</a>。`
+ *
+ *   （自定义引擎走 brace 模式 `{{N}}`，见 collect(mode) 的说明。）
  *
  * 还原策略分两种，互不干扰：
  *   - 深层单元（叶子块）：容器内没有块级子元素，swap 整个 innerHTML 即可无损回滚。
@@ -121,6 +124,28 @@
 
   const ELEMENT_NODE = 1;
   const TEXT_NODE = 3;
+
+  /*
+   * 占位符语法。
+   *
+   * translateHtml（Chrome 自带翻译用的端点）认的是 `<a i=0>…</a>`，
+   * 而 translate_a/t 认的是 `<0>…</0>` / `<0/>`。我们主端点已切到 translateHtml，
+   * 所以这里统一发 `<a i=N>` 形态：
+   *   成对：`<a i=0>文字</a>`
+   *   自闭合（空元素）：`<a i=1/>` —— 端点接受任何一种，统一用自闭合表达更短。
+   *
+   * 三个正则的分工：
+   *   PLACEHOLDER_RE  采集阶段拼装，以及 strip 掉占位符取纯文本
+   *   PARSE_RE        解析译文回传的占位符
+   * 保持单一来源，避免「采集用一个、解析用另一个」导致校验永远不过。
+   */
+  const placeholderOpen = i => `<a i=${i}>`;
+  const placeholderClose = () => `</a>`;
+  const placeholderVoid = i => `<a i=${i}/>`;
+  // 只认 `<a i=N>` / `</a>` / `<a i=N/>` 这几种形态，其余 `<` 一律当正文
+  const PLACEHOLDER_RE = /<a i=(\d+)\/>|<\/a>|<a i=(\d+)>/g;
+  // 去掉占位符：用于算纯文本、判断是否值得翻译
+  const PLACEHOLDER_STRIP_RE = /<a i=\d+\/>|<\/a>|<a i=\d+>/g;
 
   /**
    * 判断元素是否为内联元素。
@@ -277,9 +302,13 @@
    */
   function parsePlaceholders(text) {
     const pieces = [];
-    const re = /<(\d+)\/>|<\/?(\d+)>/g;
+    const re = PLACEHOLDER_RE;
+    re.lastIndex = 0;
     let last = 0;
     let match;
+    // `<a i=N>` 与 `</a>` 里的 `</a>` 不带编号，靠栈把闭合与最近的 open 配对；
+    // 配对不上（多余的 `</a>`）直接判不平衡，交给调用方放弃本次应用。
+    const openStack = [];
 
     while ((match = re.exec(text)) !== null) {
       if (match.index > last) {
@@ -287,10 +316,14 @@
       }
       if (match[1] !== undefined) {
         pieces.push({ type: "void", id: Number(match[1]) });
-      } else if (text.charAt(match.index + 1) === "/") {
-        pieces.push({ type: "close", id: Number(match[2]) });
+      } else if (match[2] !== undefined) {
+        const id = Number(match[2]);
+        openStack.push(id);
+        pieces.push({ type: "open", id });
       } else {
-        pieces.push({ type: "open", id: Number(match[2]) });
+        const id = openStack.pop();
+        if (id === undefined) return null; // 多余的 </a>
+        pieces.push({ type: "close", id });
       }
       last = re.lastIndex;
     }
@@ -299,14 +332,7 @@
       pieces.push({ type: "text", value: text.slice(last) });
     }
 
-    const stack = [];
-    for (const piece of pieces) {
-      if (piece.type === "open") stack.push(piece.id);
-      else if (piece.type === "close") {
-        if (stack.pop() !== piece.id) return null;
-      }
-    }
-    return stack.length > 0 ? null : pieces;
+    return openStack.length > 0 ? null : pieces; // 有 open 没闭合
   }
 
   /**
@@ -495,12 +521,12 @@
             }
           } else if (element.childNodes.length === 0) {
             self.placeholders.set(id, { kind: "void", element });
-            buffer += "<" + id + "/>";
+            buffer += placeholderVoid(id);
           } else {
             self.placeholders.set(id, { kind: "paired", element });
-            buffer += "<" + id + ">";
+            buffer += placeholderOpen(id);
             walk(element);
-            buffer += "</" + id + ">";
+            buffer += placeholderClose();
           }
         }
       }
@@ -512,7 +538,7 @@
       // plainText 只由「有语义的」文本节点组成：
       // 纯数字与纯符号（GitHub 的计数器 "9"、角标 "(9)"）不参与翻译，
       // 否则整段译文里会带上这些数字，而节点本身又保留数字 → 显示成 "9(9)"。
-      const strip = this.braceMode ? /\{\{\/?\d+\}\}/g : /<\d+\/>|<\/\d+>|<\d+>/g;
+      const strip = this.braceMode ? /\{\{\/?\d+\}\}/g : PLACEHOLDER_STRIP_RE;
       this.plainText = this.textNodeRefs
         .map(node => String(node.nodeValue || "").trim())
         .filter(value => value.length > 0 && /\p{L}/u.test(value))
@@ -528,7 +554,7 @@
      * @return {boolean} true 表示可翻译
      */
     hasTranslatableText() {
-      const plain = this.text.replace(/<\d+\/>|<\/?\d+>/g, "").trim();
+      const plain = this.text.replace(PLACEHOLDER_STRIP_RE, "").trim();
       if (plain.length === 0) return false;
       if (TRIVIAL_RE.test(plain)) return false;
       return /\p{L}/u.test(plain);

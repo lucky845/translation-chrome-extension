@@ -1,13 +1,22 @@
 /**
  * Google 免费翻译端点封装。
  *
- * 为什么用 translate_a/t 而不是 translate_a/single：
- *   single 端点一次只能翻一段文本，页面有 300 个块就是 300 次请求。
- *   t 端点可在一次请求里重复携带多个 q，实测 POST 1000 条（82KB）耗时 3.3 秒。
- *   成本从 O(n) 请求降到 O(n/200)。
+ * 用 Chrome 自带翻译同款的 translateHtml 端点，而不是 translate_a/t：
+ *   translate_a/t 在 sl=auto 时会把「英文为主、夹少量中文专名」的段落
+ *   检测成中文，然后原样把原文退回来 —— 我们这边表现为「这段永远不翻」。
+ *   真机取证（Chrome 自带翻译的 HAR 与我们的 HAR 对拍）：同一段文字
+ *   `A small DSH bundle that adds Cabinet Mode (内阁模式) ...`，
+ *   translate_a/t 判定 zh-CN 后逐字返回原文，translateHtml 正常翻成中文。
+ *   端点不同才是差异，不是参数写错。
  *
- * 返回格式（实测）：
- *   [["译文", "检测到的语言"], [["译文", "en"], ...]] 两种形态都可能出现，统一归一化。
+ * 请求格式（实测 Chrome，逐字复现）：
+ *   POST，content-type: application/json+protobuf
+ *   x-goog-api-key: <Chrome 内置公开 key>
+ *   body: [[[text1, text2, ...], 源语言, 目标语言], "te_lib", null, 1]
+ *   响应: [[译文1, 译文2, ...]]，与 requests 按位对应。
+ *
+ * 占位符：该端点用 `<a i=N>…</a>`（不是 translate_a/t 的 `<0>…</0>`），
+ * 内联标签编号与语义由 dom-core.js 负责，这里只负责搬运。
  */
 
 import {
@@ -24,19 +33,20 @@ import { CustomEngine } from "./engines/custom.js";
 // 对外保持原有导出路径（测试与调用方都从 engine.js 取）：
 export { RetryableError, FatalTranslationError, splitSentences };
 
-const ENDPOINT = "https://translate.googleapis.com/translate_a/t";
+const ENDPOINT = "https://translate-pa.googleapis.com/v1/translateHtml";
 
-// 单条兜底端点：返回结构化 JSON（{sentences:[{trans}], src}），
-// 比 translate_a/t 的嵌套数组健壮得多；批量响应解析失败时用它逐条补。
-// 端点：translate_a/single?dj=1。
-const SINGLE_ENDPOINT = "https://translate.googleapis.com/translate_a/single";
+// Chrome 自带翻译内置的公开 key（来自 Chrome 分发的翻译资源，不是用户凭证）。
+// 实测从扩展 service worker 发起可直接使用（Origin: chrome-extension://… 不被拒）。
+const ENDPOINT_API_KEY = "AIzaSyATBXajvzQLTDHEQbcpq0Ihe0vWDHmO520";
 
-// 单次请求上限。实测 400 条普通句子会 400 错误，200 条稳定；URL 控制在 7KB 内。
+// 模型标识，Chrome 自带翻译固定发 "te_lib"。
+const ENDPOINT_MODEL = "te_lib";
+
+// 单次请求上限。实测 Chrome 自带翻译单包 97 条；我们的批大小 120，
+// 直接对齐即可（JSON body 没有 URL 长度限制，这里是结果数量稳定性的上限）。
 const MAX_TEXTS_PER_CHUNK = 120;
-// GET 请求把 q 全部放在 query string 里，URL 长度是真限制。
-// 真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
-//   120 条 / URL 7642 字符 → 200，1.03s；80 条 / 5102 字符 → 200，0.71s。
-// 留出余量防超长 URL 被网关 414，取 6000 字符。
+// 每个请求体的字符预算。POST 不受 URL 长度约束，这里保守取 6000，
+// 避免单个包体过大拖慢响应；超出就再切一块。
 const MAX_URL_CHARS = 6000;
 
 // 并发上限。实测 20 并发 1.84s 全成功，但页面翻译取保守值避免触发限流。
@@ -53,6 +63,26 @@ const REQUEST_TIMEOUT_MS = 10000;
  * Google 免费端点。
  */
 export class GoogleEngine extends BaseEngine {
+  /**
+   * 从 translateHtml 响应中取出译文数组。
+   *
+   * 实测标准形态是 `[["译文1", "译文2", ...]]`，再套一层是历史兼容
+   * （旧端点与部分网关的 `[[[...]]]`）。取不到就返回 null 交给重试。
+   *
+   * @param {*} data 响应 JSON
+   * @return {?Array<string>} 译文数组，结构不认识时返回 null
+   */
+  static unwrapTranslations(data) {
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const first = data[0];
+    if (!Array.isArray(first)) return null;
+    // 标准形态：data[0] 本身就是译文数组
+    if (first.length === 0 || typeof first[0] === "string") return first;
+    // 多包一层：data[0][0] 才是译文数组
+    if (Array.isArray(first[0])) return first[0];
+    return null;
+  }
+
   /**
    * 归一化单条返回，兼容扁平与嵌套两种形态。
    * @param {*} item 单条结果
@@ -74,21 +104,23 @@ export class GoogleEngine extends BaseEngine {
    * @return {Promise<Array<{text: string, detected: ?string}>>}
    */
   async requestChunk(texts, fromLang, toLang) {
-    const params = new URLSearchParams({ client: "gtx", sl: fromLang, tl: toLang });
-    for (const text of texts) params.append("q", text);
+    // Chrome 一侧始终发显式源语言（实测为 "en"）。我们默认是 auto，
+    // 端点接受 auto（实测 200），但显式语言绕开检测、结果更稳，所以原样透传。
+    const payload = [[texts, fromLang, toLang], ENDPOINT_MODEL, null, 1];
 
     let lastError = null;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
       try {
-        // 必须用 GET。真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
-        //   同一端点 GET 120 条 → 200，1.03s；
-        //   同一端点 POST 1 条（109 字节 body）→ Failed to fetch，网络层就断了。
-        // Google 对 translate_a/t 的 POST 预检不返回 CORS 头，浏览器在真正发出请求前
-        // 就把 fetch 判死。旧代码把 "Failed to fetch" 当成普通可重试错误，
-        // 于是每隔几秒重试一次、再降级、再重试，用户最终看到「所有引擎失败」——
-        // 而真正的原因是请求根本没发出去。
-        const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
+        // 用 POST 发 JSON body。历史上 translate_a/t 必须用 GET（它的 POST 预检
+        // 不返回 CORS 头），但 translateHtml 本身就是 POST 接口，没有这个问题。
+        const response = await fetch(ENDPOINT, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json+protobuf",
+            "x-goog-api-key": ENDPOINT_API_KEY,
+          },
+          body: JSON.stringify(payload),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
 
@@ -107,12 +139,18 @@ export class GoogleEngine extends BaseEngine {
           throw new RetryableError(`HTTP ${response.status}`);
         }
 
+        // 响应形如 [[译文1, 译文2, ...]]：外层长度为 1，译文在 [0] 里按位对应。
+        // 也兼容被多包一层（部分网关会返回 [[[...]]]），统一取到最内层数组。
         const data = await response.json();
-        if (!Array.isArray(data)) throw new RetryableError("响应不是数组");
-        if (data.length !== texts.length) {
-          throw new RetryableError(`结果数量不符：期望 ${texts.length}，实际 ${data.length}`);
+        const translations = GoogleEngine.unwrapTranslations(data);
+        if (translations === null) throw new RetryableError("响应结构异常");
+        if (translations.length !== texts.length) {
+          throw new RetryableError(`结果数量不符：期望 ${texts.length}，实际 ${translations.length}`);
         }
-        return data.map(GoogleEngine.normalizeItem);
+        return translations.map(text => ({
+          text: typeof text === "string" ? text : "",
+          detected: null,
+        }));
       } catch (error) {
         // 限流不重试：退避 3 次（0.5+1+2 秒）只是让用户多等 3 秒，
         // 配额窗口通常以分钟计，这 3 秒等不来配额，只会拖慢降级。
@@ -146,9 +184,13 @@ export class GoogleEngine extends BaseEngine {
   /**
    * 单条翻译，走结构化 JSON 端点。
    *
-   * 为什么需要：translate_a/t 的批量响应是位置相关的嵌套数组，
+   * 为什么需要：批量端点的响应是位置相关的嵌套数组，
    * 一旦服务端返回结构变化或数量不符，整批都会失败。
    * 结构化端点有明确的 sentences[].trans 与 src，适合作为逐条兜底。
+   *
+   * 走的是单条 translateHtml（不是 translate_a/single）：占位符语法必须
+   * 与主端点一致（`<a i=N>`），否则逐条兜底的译文一定过不了
+   * dom-core 的占位符完整性校验，兜底等于白跑。
    *
    * @param {string} text 待翻译文本
    * @param {string} fromLang 源语言
@@ -156,31 +198,29 @@ export class GoogleEngine extends BaseEngine {
    * @return {Promise<{text: string, detected: ?string}>} 结果
    */
   async translateOne(text, fromLang, toLang) {
-    const params = new URLSearchParams({
-      client: "gtx",
-      sl: fromLang,
-      tl: toLang,
-      dt: "t",
-      dj: "1",
-      ie: "UTF-8",
-      q: text,
-    });
+    const payload = [[[text], fromLang, toLang], ENDPOINT_MODEL, null, 1];
 
-    const response = await fetch(`${SINGLE_ENDPOINT}?${params.toString()}`, {
-      method: "GET",
+    const response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json+protobuf",
+        "x-goog-api-key": ENDPOINT_API_KEY,
+      },
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new RetryableError(`单条翻译 HTTP ${response.status}`);
 
     const data = await response.json();
-    const sentences = data && data.sentences;
-    if (!Array.isArray(sentences)) throw new RetryableError("单条翻译响应缺少 sentences");
+    const translations = GoogleEngine.unwrapTranslations(data);
+    if (translations === null || translations.length !== 1) {
+      throw new RetryableError("单条翻译响应结构异常");
+    }
 
-    // 拼接所有分段，保留原文顺序与标点
-    const translated = sentences.map(item => (item && item.trans) || "").join("");
     return {
-      text: translated,
-      detected: typeof data.src === "string" ? data.src : null,
+      text: typeof translations[0] === "string" ? translations[0] : "",
+      // translateHtml 不返回检测到的语言；上层只在有值时使用，保持 null 即可。
+      detected: null,
     };
   }
 

@@ -37,6 +37,30 @@ let environmentLimited = false;
 const results = [];
 
 /**
+ * Google 引擎用到的两个主机。
+ *
+ * 主端点已从 translate.googleapis.com（translate_a/t）切到
+ * translate-pa.googleapis.com（translateHtml），单条兜底仍走前者，
+ * 所以 mock 必须同时认这两个主机——只认旧的会让用例穿到真实网络上去。
+ * 注意 `translate-pa.googleapis.com`.includes("translate.googleapis.com") 是 false，
+ * 不能靠子串判断。
+ */
+const GOOGLE_HOSTS = new Set(["translate-pa.googleapis.com", "translate.googleapis.com"]);
+
+/**
+ * 判断一个请求 URL 是否打向 Google 引擎。
+ * @param {string} url 请求地址
+ * @return {boolean} true 表示是 Google 引擎的请求
+ */
+function isGoogleHost(url) {
+  try {
+    return GOOGLE_HOSTS.has(new URL(url).host);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 判断错误是否为环境限流（429），是则记录并跳过该用例。
  * @param {Error} error 错误
  * @return {boolean} true 表示环境受限
@@ -304,13 +328,9 @@ await test("缓存：恢复后再次翻译全部命中缓存，必须返回 ok �
   await withMockFetch(
     () => {
       calls += 1;
-      return new Response(
-        JSON.stringify([
-          ["甲", "en"],
-          ["乙", "en"],
-        ]),
-        { status: 200 }
-      );
+      // translateHtml 的响应形态是 [["译文1", "译文2"]]，不是旧端点的
+      // [["译文", "检测语言"], ...]。mock 必须按新形态给。
+      return new Response(JSON.stringify([["甲", "乙"]]), { status: 200 });
     },
     async () => {
       const first = await translateTexts(["A", "B"], "auto", "zh-CN", "google");
@@ -402,7 +422,7 @@ await test("熔断：引擎失败后进入冷却，下一批不再重付超时",
   const callOrder = [];
   const handler = url => {
     callOrder.push(new URL(url).host);
-    if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+    if (isGoogleHost(url)) return new Response("blocked", { status: 429 });
     if (url.includes("api.mymemory.translated.net")) {
       const q = new URL(url).searchParams.get("q");
       return new Response(
@@ -421,7 +441,7 @@ await test("熔断：引擎失败后进入冷却，下一批不再重付超时",
   await withMockFetch(handler, async () => {
     const first = await translateTexts(["first batch"], "auto", "zh-CN", "google");
     assert.equal(first.ok, true);
-    const googleCallsFirstBatch = callOrder.filter(host => host === "translate.googleapis.com").length;
+    const googleCallsFirstBatch = callOrder.filter(host => GOOGLE_HOSTS.has(host)).length;
     assert.ok(googleCallsFirstBatch > 0, "第一批应尝试过 Google");
     assert.equal(getEngineHealth().google.cooling, true, "Google 失败后应进入冷却");
 
@@ -430,7 +450,7 @@ await test("熔断：引擎失败后进入冷却，下一批不再重付超时",
     assert.equal(second.ok, true);
     assert.equal(second.engine, "mymemory");
     assert.equal(
-      callOrder.filter(host => host === "translate.googleapis.com").length,
+      callOrder.filter(host => GOOGLE_HOSTS.has(host)).length,
       0,
       `冷却期内不应再打 Google，实际调用序: ${callOrder.join(",")}`
     );
@@ -451,10 +471,7 @@ await test("熔断：冷却期内反复失败不会把到期时间无限推后",
 
   // 全链路不可用：每个批次都会走完 ready 再兜底冷却中的引擎
   await withMockFetch(
-    url =>
-      url.includes("translate.googleapis.com")
-        ? new Response("blocked", { status: 429 })
-        : new Response("down", { status: 503 }),
+    url => (isGoogleHost(url) ? new Response("blocked", { status: 429 }) : new Response("down", { status: 503 })),
     async () => {
       await translateTexts(["nope one"], "auto", "zh-CN", "google");
       const firstUntil = getEngineHealth().google.until;
@@ -483,7 +500,7 @@ await test("熔断：resetEngineHealth 后引擎重新参与（用户改配置�
   await withMockFetch(
     url => {
       callOrder.push(new URL(url).host);
-      if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+      if (isGoogleHost(url)) return new Response("blocked", { status: 429 });
       return new Response("down", { status: 503 });
     },
     async () => {
@@ -509,7 +526,7 @@ await test("降级链：Google 挂时先走 MyMemory，Lingva 不被触碰（链
   await withMockFetch(
     url => {
       callOrder.push(new URL(url).host);
-      if (url.includes("translate.googleapis.com")) return new Response("blocked", { status: 429 });
+      if (isGoogleHost(url)) return new Response("blocked", { status: 429 });
       if (url.includes("lingva")) return new Response("down", { status: 503 });
       if (url.includes("api.mymemory.translated.net")) {
         const q = new URL(url).searchParams.get("q");
@@ -538,7 +555,7 @@ await test("降级链：Google 挂时先走 MyMemory，Lingva 不被触碰（链
       const firstMemory = callOrder.indexOf("api.mymemory.translated.net");
       assert.ok(firstMemory > 0, "MyMemory 应被调用");
       assert.ok(
-        callOrder.slice(0, firstMemory).every(host => host === "translate.googleapis.com"),
+        callOrder.slice(0, firstMemory).every(host => GOOGLE_HOSTS.has(host)),
         `MyMemory 之前只应尝试 Google（含 429 重试），实际: ${callOrder.join(",")}`
       );
     }
@@ -554,7 +571,7 @@ await test("熔断：Google 失败后下一批次直接跳过它，不再重付�
     url => {
       const host = new URL(url).host;
       hosts.push(host);
-      if (host === "translate.googleapis.com") return new Response("blocked", { status: 429 });
+      if (GOOGLE_HOSTS.has(host)) return new Response("blocked", { status: 429 });
       if (host === "api.mymemory.translated.net") {
         const q = new URL(url).searchParams.get("q");
         return new Response(
@@ -571,7 +588,7 @@ await test("熔断：Google 失败后下一批次直接跳过它，不再重付�
     async () => {
       const first = await translateTexts(["first batch text"], "auto", "zh-CN", "google");
       assert.equal(first.engine, "mymemory");
-      const googleCallsFirst = hosts.filter(host => host === "translate.googleapis.com").length;
+      const googleCallsFirst = hosts.filter(host => GOOGLE_HOSTS.has(host)).length;
       assert.ok(googleCallsFirst >= 1, "首批应尝试 Google");
 
       assert.ok(getEngineHealth().google, "Google 应进入冷却");
@@ -582,7 +599,7 @@ await test("熔断：Google 失败后下一批次直接跳过它，不再重付�
       assert.equal(second.degraded, true, "降级标记保留给用户看");
       const secondHosts = hosts.slice(before);
       assert.ok(
-        !secondHosts.includes("translate.googleapis.com"),
+        !secondHosts.some(host => GOOGLE_HOSTS.has(host)),
         `第二批不应再碰 Google，实际: ${secondHosts.join(",")}`
       );
       assert.ok(secondHosts.includes("api.mymemory.translated.net"));
@@ -760,53 +777,97 @@ if (environmentLimited) {
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);
 if (failed > 0) process.exitCode = 1;
 
-await test("Google：批量请求必须走 GET（POST 会被浏览器预检拒绝）", async () => {
-  // 真机实测（Chrome for Testing 157，扩展 service worker 上下文）：
-  //   同一 translate_a/t 端点，GET 120 条 → 200；POST 1 条 → Failed to fetch。
-  // Google 对 POST 的预检响应不带 CORS 头，浏览器在请求发出前就把它判死。
-  // 而 mock fetch 不区分方法，旧代码的 POST 在测试里从没暴露过——补这条锁死。
+await test("Google：批量请求走 translateHtml 的 POST + protobuf 体", async () => {
+  // 端点契约来自 Chrome 自带翻译的真实 HAR（逐字复现）：
+  //   POST https://translate-pa.googleapis.com/v1/translateHtml
+  //   content-type: application/json+protobuf
+  //   x-goog-api-key: <Chrome 内置 key>
+  //   body: [[[texts...], from, to], "te_lib", null, 1]
+  //   response: [["译文1", "译文2", ...]]
+  // 这几条任何一条错了，请求要么 4xx 要么结构与解析对不上，
+  // 所以用断言把它们锁死，而不是只验「翻出来了」。
   const seen = [];
   await withMockFetch(
     (url, init) => {
-      seen.push({ url, method: (init && init.method) || "GET" });
-      const count = (url.match(/[?&]q=/g) || []).length;
-      return new Response(JSON.stringify(Array.from({ length: count }, (_, i) => [`译文${i}`, "en"])), { status: 200 });
+      const body = init && init.body ? JSON.parse(init.body) : null;
+      seen.push({
+        url,
+        method: (init && init.method) || "GET",
+        headers: (init && init.headers) || {},
+        body,
+      });
+      const count = body ? body[0][0].length : 0;
+      return new Response(JSON.stringify([Array.from({ length: count }, (_, i) => `译文${i}`)]), { status: 200 });
     },
     async () => {
       const engine = new GoogleEngine();
-      await engine.translate(["one", "two", "three"], "auto", "zh-CN");
+      const results = await engine.translate(["one", "two", "three"], "auto", "zh-CN");
+      assert.strictEqual(results.length, 3, "译文条数必须与输入一致");
+      assert.strictEqual(results[0].text, "译文0");
     }
   );
 
-  assert(seen.length > 0, "应当发出至少一次请求");
-  for (const request of seen) {
-    assert.strictEqual(request.method, "GET", `Google 批量请求必须用 GET，实际 ${request.method}`);
-    assert(request.url.includes("?client=gtx"), "参数应拼在 query string 里");
-  }
+  assert.strictEqual(seen.length, 1, `3 条应打包成 1 个请求，实际 ${seen.length} 个`);
+  const request = seen[0];
+  assert.strictEqual(request.method, "POST", `批量请求必须用 POST，实际 ${request.method}`);
+  assert(
+    request.url.includes("translate-pa.googleapis.com/v1/translateHtml"),
+    `必须打 translateHtml 端点，实际 ${request.url}`
+  );
+  assert.strictEqual(
+    request.headers["content-type"],
+    "application/json+protobuf",
+    "content-type 必须是 application/json+protobuf"
+  );
+  assert.ok(request.headers["x-goog-api-key"], "必须带 x-goog-api-key，否则端点 401");
+  // 体形状：[[[文本...], 源语言, 目标语言], "te_lib", null, 1]
+  assert.strictEqual(request.body.length, 4, "外层必须是长度 4 的数组");
+  assert.deepStrictEqual(request.body[0][0], ["one", "two", "three"], "文本数组必须按原序");
+  assert.strictEqual(request.body[0][1], "auto", "源语言必须透传");
+  assert.strictEqual(request.body[0][2], "zh-CN", "目标语言必须透传");
+  assert.strictEqual(request.body[1], "te_lib", "模型标识必须是 te_lib");
+  assert.strictEqual(request.body[3], 1, "末位必须是 1");
 });
 
-await test("Google：GET 分块按编码后的 URL 长度切分", async () => {
-  // 汉字经 encodeURIComponent 后膨胀成 9 个字符，按字节数估会严重低估 URL 长度。
-  const seen = [];
-  const texts = Array.from({ length: 60 }, () => "这是一段用于测试分块策略的中文文本");
+await test("Google：响应外层多包一层时仍能解析（兼容网关变体）", async () => {
+  // 历史上不同网关会把 [["译文"]] 包成 [[["译文"]]]。取不到就读不出来，
+  // 但也不该把合法结构判死——这里锁死 unwrapTranslations 的兼容分支。
+  await withMockFetch(
+    () => new Response(JSON.stringify([[["包了两层"]]]), { status: 200 }),
+    async () => {
+      const engine = new GoogleEngine();
+      const [result] = await engine.translate(["hello"], "en", "zh-CN");
+      assert.strictEqual(result.text, "包了两层");
+    }
+  );
+});
+
+await test("Google：结果数量不符时抛错而不是静默错位", async () => {
+  // 位置对应的端点最怕「少给一条」：少一条会让后面每条译文错位到别人的 DOM 上。
+  // 必须显式失败，交给上层降级，而不是悄悄把短数组返回。
+  //
+  // 注意：批量数量不符会触发逐条兜底（每条单独发、单独收），所以 mock 必须
+  // 让**批量请求返回数量不符、单条请求也失败**，才能真正验到「整批失败」。
   await withMockFetch(
     (url, init) => {
-      seen.push({ url, method: (init && init.method) || "GET" });
-      const count = (url.match(/[?&]q=/g) || []).length;
-      return new Response(JSON.stringify(Array.from({ length: count }, (_, i) => [`译文${i}`, "zh-CN"])), {
-        status: 200,
-      });
+      const body = init && init.body ? JSON.parse(init.body) : null;
+      const count = body ? body[0][0].length : 0;
+      if (count > 1) {
+        // 批量：故意少给一条
+        return new Response(JSON.stringify([["只有一条"]]), { status: 200 });
+      }
+      // 单条兜底：也失败，避免兜底把用例「救活」
+      return new Response("nope", { status: 500 });
     },
     async () => {
       const engine = new GoogleEngine();
-      const results = await engine.translate(texts, "en", "zh-CN");
-      assert.strictEqual(results.length, texts.length, "结果数量必须与输入一致");
+      await assert.rejects(
+        () => engine.translate(["a", "b", "c"], "en", "zh-CN"),
+        error => /数量不符/.test(String(error.message)) || /HTTP 500/.test(String(error.message)),
+        "数量不符且兜底也失败时必须抛错"
+      );
     }
   );
-
-  for (const request of seen) {
-    assert(request.url.length <= 6600, `URL 长度 ${request.url.length} 超过安全上限`);
-  }
 });
 
 await test("降级链：首选失败后按最近成功排序，而不是死守固定链序", async () => {

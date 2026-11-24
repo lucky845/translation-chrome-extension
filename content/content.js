@@ -78,8 +78,11 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  /** 占位符 token：<0>…</0> 成对，或 <0/> 自闭合。 */
-  const PLACEHOLDER_TOKEN = /<(\d+)(\/)?>|<\/(\d+)>/g;
+  /**
+   * 占位符 token：`<a i=N>` / `</a>` 成对，或 `<a i=N/>` 自闭合。
+   * 与 dom-core.js 的 PLACEHOLDER_RE 必须同源，否则切分会切进占位符内部。
+   */
+  const PLACEHOLDER_TOKEN = /<a i=(\d+)\/>|<\/a>|<a i=(\d+)>/g;
 
   /**
    * 把各片译文拼回整段。
@@ -104,9 +107,9 @@
   /**
    * 把长文本切成不超过 maxChars 的片，且**绝不切开占位符**。
    *
-   * 占位符是给引擎的结构标记，`<0>` 和 `</0>` 分到两片里，
+   * 占位符是给引擎的结构标记，`<a i=0>` 和 `</a>` 分到两片里，
    * 引擎会各自当成残片丢掉，译文回来校验必然失败。
-   * 所以切点只在「不在任何 <n>…</n> 内部」的句子边界上。
+   * 所以切点只在「不在任何 `<a i=N>…</a>` 内部」的句子边界上。
    * @param {string} text 待切分文本
    * @param {number} maxChars 单片上限
    * @return {string[]} 片段（拼接后与原文等价，只多了连接空格）
@@ -131,8 +134,10 @@
 
       PLACEHOLDER_TOKEN.lastIndex = 0;
       for (const m of sentence.matchAll(PLACEHOLDER_TOKEN)) {
-        if (m[3] !== undefined) depth = Math.max(0, depth - 1);
-        else if (m[2] === undefined) depth++;
+        // m[1] = 自闭合编号；m[2] = 开始标签编号；都没有就是 `</a>`（闭合）
+        if (m[1] !== undefined) continue; // 自闭合不改变嵌套深度
+        if (m[2] !== undefined) depth++;
+        else depth = Math.max(0, depth - 1);
       }
     }
     if (current) parts.push(current);

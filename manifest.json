@@ -3,7 +3,7 @@
   "default_locale": "zh_CN",
   "name": "__MSG_extensionName__",
   "description": "__MSG_extensionDescription__",
-  "version": "1.1.6",
+  "version": "1.2.0",
   "minimum_chrome_version": "103",
   "homepage_url": "https://github.com/lucky845/translation-chrome-extension",
   "commands": {
@@ -22,6 +22,7 @@
   },
   "host_permissions": [
     "https://translate.googleapis.com/*",
+    "https://translate-pa.googleapis.com/*",
     "https://edge.microsoft.com/*",
     "https://api.cognitive.microsofttranslator.com/*",
     "https://api.mymemory.translated.net/*",
