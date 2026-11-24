@@ -628,6 +628,24 @@ test("非中文目标语言不做字面判定", () => {
   assert.equal(api.isAlreadyTarget("这是一个中文段落", "en"), false, "翻英文时中文内容必须送翻");
 });
 
+console.log("\n[9] 内联包装壳里的表格（GitHub markdown-accessiblity-table 回归）");
+test("display:inline 的包装元素含块级表格时，表格单元不被吞掉", () => {
+  const { api, win } = load(`<html><body><article>
+    <p>Intro paragraph.</p>
+    <markdown-accessiblity-table><table>
+      <thead><tr><th>Tool</th><th>Effect</th></tr></thead>
+      <tbody><tr><td>ai_prison_levels</td><td>read-only</td></tr></tbody>
+    </table></markdown-accessiblity-table>
+    <p>Outro paragraph.</p>
+  </article></body></html>`);
+  const texts = api.collectUnits(win.document.body, "tag").map(u => u.text);
+  assert.ok(texts.includes("Tool"), "表头 Tool 应被采集");
+  assert.ok(texts.includes("Effect"), "表头 Effect 应被采集");
+  assert.ok(texts.includes("ai_prison_levels"), "表格单元格应被采集");
+  assert.ok(texts.includes("read-only"), "表格单元格应被采集");
+  assert.ok(texts.includes("Intro paragraph."), "表格外段落仍正常采集");
+});
+
 const failed = results.filter(r => !r.ok).length;
 console.log(`\n${"=".repeat(50)}`);
 console.log(`总计 ${results.length} 项，通过 ${results.length - failed} 项，失败 ${failed} 项`);

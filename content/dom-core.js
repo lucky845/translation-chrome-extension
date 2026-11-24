@@ -1037,7 +1037,11 @@
       }
 
       for (const child of visibleChildren(node)) {
-        if (isInline(child)) continue;
+        // 内联包装壳：自身没有直属文本、内部却含块级后代时，不能当普通内联
+        // 占位符跳过。GitHub 用 <markdown-accessiblity-table>（自定义元素，
+        // 默认 display:inline）包住整个 <table>，旧逻辑会把整棵表格子树静默
+        // 丢弃——实测 collectUnits(document.body) 漏掉全部 27 个表格单元。
+        if (isInline(child) && !hasBlockChild(child)) continue;
         walk(child);
       }
     }
