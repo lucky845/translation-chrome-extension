@@ -78,6 +78,21 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // 首次翻译和动态补译共用等待上限。在线回退不会取消后台的模型准备。
+  async function waitForOffline(from, target) {
+    let timer;
+    try {
+      return await Promise.race([
+        OFFLINE.warmup(from, target).then(ok => ({ ok })),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve({ ok: false, pending: true }), 1200);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * 占位符 token：`<a i=N>` / `</a>` 成对，或 `<a i=N/>` 自闭合。
    * 与 dom-core.js 的 PLACEHOLDER_RE 必须同源，否则切分会切进占位符内部。
@@ -117,7 +132,9 @@
   function splitForEngine(text, maxChars) {
     if (!text || text.length <= maxChars) return text ? [text] : [];
 
-    const sentences = text.split(/(?<=[.!?。！？；;])\s*/);
+    // 西文标点后要有空白才视为句界，避免拆开域名、版本号和小数。
+    // 中日韩句末标点则不要求空白。
+    const sentences = text.split(/(?<=[.!?;])\s+|(?<=[。！？；])\s*/);
     const parts = [];
     let current = "";
     let depth = 0;
@@ -155,6 +172,7 @@
   const controller = {
     /** @type {'idle'|'translating'|'translated'} */
     state: "idle",
+    translationGeneration: 0,
     /** @type {Array<Object>} */
     units: [],
     /** @type {?Object} */
@@ -165,10 +183,9 @@
     degraded: false,
     /** @type {?number} */
     mutationTimer: null,
+    pendingMutationRoots: new Set(),
     /** @type {boolean} */
     observerSuppressed: false,
-    /** @type {Array<{element: Element, attr: string, text: string}>} 待翻译的属性文本 */
-    attributeEntries: [],
     /** @type {Array<{element: Element, attr: string, value: string}>} 已改写属性的原值 */
     savedAttrText: [],
     /** @type {boolean} 正在还原：用于让翻译循环立刻停下 */
@@ -208,7 +225,11 @@
     async translatePage() {
       if (this.state === "translating") return { success: false, count: 0, error: "正在翻译中" };
 
+      const generationBeforeSettings = this.translationGeneration;
+      const interrupted = { success: false, count: 0, error: "翻译已取消" };
       const settings = await this.loadSettings();
+      if (generationBeforeSettings !== this.translationGeneration) return interrupted;
+      if (this.state === "translating") return { success: false, count: 0, error: "正在翻译中" };
       const target = settings.targetLanguage;
 
       // 黑名单站点：不翻译。企业后台/银行/登录页的语义不能被机器翻译破坏。
@@ -232,6 +253,8 @@
 
       if (this.state === "translated") this.restorePage();
 
+      const generation = ++this.translationGeneration;
+      const cancelled = () => generation !== this.translationGeneration;
       this.state = "translating";
       this.lastError = null;
       this.degraded = false;
@@ -255,10 +278,6 @@
         // 按单元剔除已是目标语言的段落。
         // 整页判断不可靠：GitHub 这类页面 lang="en"，但 README 正文是中文，
         // 一刀切会把「中文翻成中文」，产出「功能特性 → 好吃」这种荒谬结果。
-        // 属性文本（title / alt / aria-label / placeholder）单独走一遍：
-        // 它们不在正文里，单元采集根本碰不到。全页维度，和单元过滤互不影响。
-        this.attributeEntries = DOM.collectAttributeTexts(document.body, target);
-
         const beforeFilter = this.units.length;
         this.units = this.filterAlreadyTarget(this.units, target);
         if (this.units.length === 0) {
@@ -274,31 +293,19 @@
         // 端侧优先；不支持或模型未就绪时立刻回落在线引擎，绝不干等。
         const from = settings.sourceLanguage || "auto";
         let applied = 0;
+        let offlineReady = false;
 
         if (settings.useOffline !== "off" && OFFLINE && OFFLINE.supported) {
           // 给端侧 1.2 秒：模型已缓存时几乎立即返回；需要下载时先走在线引擎
-          const quick = await Promise.race([
-            OFFLINE.warmup(from, target).then(ok => ({ ok })),
-            new Promise(resolve => setTimeout(() => resolve({ ok: false, pending: true }), 1200)),
-          ]);
+          const quick = await waitForOffline(from, target);
+          if (cancelled()) return interrupted;
 
           if (quick.ok) {
+            offlineReady = true;
             applied = await this.translateOffline(this.units, from, target);
+            if (cancelled()) return interrupted;
           } else if (quick.pending) {
             this.showIndicator("翻译中…（端侧模型准备中，先用在线引擎）");
-          }
-        }
-
-        // 属性文本必须先于正文翻译：内联元素（<img alt>、<a title> 等）在正文
-        // 译文应用时会被 cloneNode(false) 重建，原元素随即脱离文档；若此时才写
-        // setAttribute，改的是已脱离的旧节点，可见的克隆体仍保留旧属性
-        // （真机实测：<p> 里的 <img alt="tower"> 翻完后 alt 仍是英文）。
-        // 失败不影响整体结果——tooltip 翻不了不该让整页判定为失败。
-        if (this.attributeEntries.length > 0) {
-          try {
-            await this.translateAttributes(from, target);
-          } catch {
-            // 属性翻译失败静默降级，正文译文保留
           }
         }
 
@@ -306,9 +313,16 @@
         let failedCount = 0;
         if (remaining.length > 0) {
           applied += await this.translateUnits(remaining, target, { lazy: settings.lazyTranslate !== "off" });
+          if (cancelled()) return interrupted;
           // 重试后仍然失败的段数：必须如实上报，不能让「翻了一半」冒充「翻译完成」
           failedCount = this.failedCount || 0;
           this.failedCount = 0;
+        }
+
+        // 正文优先：正文回填后才扫描属性，直接采集页面上的活节点。
+        if (this.state === "translating" && !this.restoring) {
+          await this.translateAttributes(from, target, offlineReady).catch(() => 0);
+          if (cancelled()) return interrupted;
         }
 
         this.hideIndicator();
@@ -338,7 +352,9 @@
           const total = applied + failedCount;
           this.lastError = `有 ${failedCount} 段未翻译（共 ${total} 段），多为引擎限流或网络波动，可点「重新翻译」补齐`;
           this.showIndicator(`已翻译 ${applied}/${total} 段 · 剩余 ${failedCount} 段失败`, true);
-          setTimeout(() => this.hideIndicator(), 5000);
+          setTimeout(() => {
+            if (!cancelled()) this.hideIndicator();
+          }, 5000);
           return { success: true, count: applied, elapsed, failed: failedCount, error: this.lastError };
         }
 
@@ -360,6 +376,7 @@
         setTimeout(() => this.hideIndicator(), 2500);
         return { success: true, count: applied, elapsed };
       } catch (error) {
+        if (cancelled()) return interrupted;
         this.state = "idle";
         this.hideIndicator();
         this.lastError = error.message || String(error);
@@ -376,40 +393,59 @@
      * @param {string} to 目标语言
      * @return {Promise<number>} 应用数量
      */
-    async translateAttributes(from, to) {
-      const entries = this.attributeEntries || [];
+    async translateAttributes(from, to, offlineReady = false) {
+      const translatedElements = new Set(this.units.filter(unit => unit.translated).map(unit => unit.element));
+      const entries = DOM.collectAttributeTexts(document.body, to, translatedElements);
       if (entries.length === 0) return 0;
 
-      const texts = entries.map(entry => entry.text);
-      let results;
-      try {
-        // 注意 action 名必须是 translateBatch（见 service-worker 的 handlers 表），
-        // 写错会静默返回 {ok:false, error:"未知动作"}，属性一个都翻不了。
-        results = await sendMessage({
-          action: "translateBatch",
-          texts: texts,
-          sourceLanguage: from,
-          targetLanguage: to,
-        });
-      } catch {
-        return 0;
-      }
-      if (!results || !Array.isArray(results.results)) return 0;
-
+      const texts = [...new Set(entries.map(entry => entry.text))];
       const map = new Map();
-      texts.forEach((text, index) => {
-        // SW 的 translateBatch 返回 {text, detected} 对象数组，不是字符串数组。
-        // 旧实现按字符串判断，typeof 永远是 "object"，属性翻译从未生效过。
-        const piece = results.results[index];
-        const translated = piece && typeof piece.text === "string" ? piece.text : null;
-        if (translated && translated.trim() && translated !== text) {
-          map.set(text, translated);
+      const remember = (text, result) => {
+        const translated = typeof result?.text === "string" ? result.text.trim() : "";
+        if (translated && translated !== text) map.set(text, translated);
+      };
+      const generation = this.translationGeneration;
+      const cancelled = () =>
+        generation !== this.translationGeneration || this.state !== "translating" || this.restoring;
+      if (offlineReady) {
+        let failures = 0;
+        for (const text of texts) {
+          if (cancelled()) return 0;
+          try {
+            const [result] = await OFFLINE.translate([text], from, to);
+            remember(text, result);
+            failures = 0;
+          } catch {
+            if (++failures >= 3) break;
+          }
         }
-      });
+      }
+      if (cancelled()) return 0;
+      const remaining = texts.filter(text => !map.has(text));
+      if (remaining.length > 0) {
+        try {
+          const response = await sendMessage({
+            action: "translateBatch",
+            texts: remaining,
+            sourceLanguage: from,
+            targetLanguage: to,
+          });
+          if (Array.isArray(response?.results)) {
+            remaining.forEach((text, index) => remember(text, response.results[index]));
+          }
+        } catch {
+          // 在线回退失败时，仍应用已经获得的端侧属性译文。
+        }
+      }
       if (map.size === 0) return 0;
 
       if (!this.savedAttrText) this.savedAttrText = [];
-      const applied = DOM.applyAttributeTexts(entries, map, this.savedAttrText);
+      if (this.state !== "translating" || this.restoring) return 0;
+      // 不覆盖框架在等待译文期间移除的节点或改写的属性。
+      const liveEntries = entries.filter(
+        ({ element, attr, text }) => element.isConnected && element.getAttribute(attr)?.trim() === text
+      );
+      const applied = DOM.applyAttributeTexts(liveEntries, map, this.savedAttrText);
       this.state = this.state === "translated" ? "translated" : this.state;
       return applied;
     },
@@ -485,28 +521,94 @@
     async translateOffline(units, from, target) {
       if (!OFFLINE || !OFFLINE.supported) return 0;
 
+      const generation = this.translationGeneration;
       let applied = 0;
-      const BATCH = 20;
-      for (let offset = 0; offset < units.length; offset += BATCH) {
-        const batch = units.slice(offset, offset + BATCH);
-        const texts = batch.map(unit => unit.plainText || unit.text);
-        let results;
-        try {
-          results = await OFFLINE.translate(texts, from, target);
-        } catch {
-          break; // 端侧失败：剩下的交给在线引擎
-        }
-        results.forEach((result, index) => {
-          const unit = batch[index];
-          if (!unit || !result) return;
-          // 端侧返回整段译文：只写一次，避免多文本节点重复
-          if (unit.applyWholeText(result.text)) {
-            applied++;
+      let pending = units.slice();
+      let cursor = 0;
+      let viewportChanged = true;
+      let consecutiveFails = 0;
+      let lastProgressAt = -Infinity;
+      const onScroll = () => {
+        viewportChanged = true;
+      };
+      // 元素的 scroll 不冒泡；捕获阶段也能监听独立滚动面板。
+      window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+      try {
+        while (
+          cursor < pending.length &&
+          generation === this.translationGeneration &&
+          this.state !== "idle" &&
+          !this.restoring
+        ) {
+          if (viewportChanged) {
+            viewportChanged = false;
+            const visible = [];
+            const rest = [];
+            const height = window.innerHeight || 800;
+            for (let i = cursor; i < pending.length; i++) {
+              const unit = pending[i];
+              const rect = unit.element?.getBoundingClientRect();
+              const inView = rect && rect.bottom > 0 && rect.top < height;
+              (inView ? visible : rest).push(unit);
+            }
+            pending = visible.concat(rest);
+            cursor = 0;
           }
-        });
-        this.showIndicator("翻译中… " + applied + "/" + units.length, true);
+          const unit = pending[cursor++];
+          let didApply;
+          try {
+            didApply = await this.applyOfflineUnit(unit, from, target);
+          } catch {
+            // 单段失败不阻塞后续；连续失败时保留原有的在线回退路径。
+            if (++consecutiveFails >= 3) break;
+            continue;
+          }
+          consecutiveFails = 0;
+          if (generation !== this.translationGeneration || this.state === "idle" || this.restoring) break;
+          if (!didApply) continue;
+          applied++;
+          // 译文立即回填，但不必每段都重绘进度提示。
+          const now = Date.now();
+          if (now - lastProgressAt >= 100) {
+            lastProgressAt = now;
+            this.showIndicator("端侧翻译中… " + applied + "/" + units.length, true);
+          }
+        }
+      } finally {
+        window.removeEventListener("scroll", onScroll, true);
       }
       return applied;
+    },
+
+    /**
+     * 端侧优先保留内联结构。只有该段的占位符校验失败时，才用纯文本重试。
+     * @param {Object} unit 翻译单元
+     * @param {string} from 源语言
+     * @param {string} target 目标语言
+     * @return {Promise<boolean>} 是否已回填
+     */
+    async applyOfflineUnit(unit, from, target) {
+      const generation = this.translationGeneration;
+      const cancelled = () =>
+        generation !== this.translationGeneration ||
+        this.state === "idle" ||
+        this.restoring ||
+        !unit.element.isConnected;
+      if (cancelled()) return false;
+      const plain = unit.plainText || unit.text;
+      const hasBrace = unit.braceMap.size > 0;
+      if (hasBrace || unit.placeholders.size > 0) {
+        const [structured] = await OFFLINE.translate([unit.text], from, target);
+        if (cancelled()) return false;
+        if (structured && structured.text.trim() !== unit.text.trim()) {
+          const applied = hasBrace ? unit.applyBrace(structured.text) : unit.apply(structured.text);
+          if (applied) return true;
+        }
+        // 没有可用的纯文本时，不把带标记的输入当作纯文本送进降级路径。
+        if (!unit.plainText || plain === unit.text) return false;
+      }
+      const [result] = await OFFLINE.translate([plain], from, target);
+      return !cancelled() && !!result && result.text.trim() !== plain.trim() && unit.applyWholeText(result.text);
     },
 
     /**
@@ -517,6 +619,8 @@
      * @return {Promise<number>} 应用数量
      */
     async translateUnits(units, target, options = {}) {
+      const generation = this.translationGeneration;
+      const cancelled = () => generation !== this.translationGeneration;
       const lazy = options.lazy !== false;
       let applied = 0;
       const pending = units.slice();
@@ -645,6 +749,7 @@
             const hitHardLimit = Date.now() - lazyStartedAt > LAZY_HARD_LIMIT_MS;
             if (!hitHardLimit && (scrolling || idleFor() < LAZY_IDLE_MS)) {
               await delay(SCROLL_DEBOUNCE_MS);
+              if (cancelled()) return applied;
               // 重新结算：可能用户已经滚到远端区域了
               const back = [];
               const stillFar = [];
@@ -675,6 +780,7 @@
             // 这一轮全是远端。必须让出一次事件循环，否则 while 立刻回到顶部、
             // 再次走到这里，形成不带 await 的忙循环，把主线程烧干。
             await delay(SCROLL_DEBOUNCE_MS);
+            if (cancelled()) return applied;
             continue;
           }
 
@@ -698,6 +804,7 @@
             texts: requests,
             targetLanguage: target,
           });
+          if (cancelled()) return applied;
 
           if (response && response.degraded) {
             this.degraded = true;
@@ -778,6 +885,7 @@
                 texts: whole.map(unit => unit.text),
                 targetLanguage: target,
               });
+              if (cancelled()) return applied;
               if (retry && retry.ok) {
                 retry.results.forEach((result, index) => {
                   const unit = whole[index];
@@ -802,6 +910,7 @@
                 texts: fallback.map(item => item.text),
                 targetLanguage: target,
               });
+              if (cancelled()) return applied;
               if (retry && retry.ok) {
                 (retry.results || []).forEach((result, index) => {
                   const item = fallback[index];
@@ -825,6 +934,7 @@
         // 用户看到的是「翻译完成，可页面还有一半是英文」。
         if (failed.length > 0 && this.state !== "idle" && !this.restoring) {
           await delay(RETRY_AFTER_FAIL_MS);
+          if (cancelled()) return applied;
           this.showIndicator("重试未完成的段落…", true);
           const retryPool = failed.slice();
           failed.length = 0;
@@ -844,6 +954,7 @@
                 texts: requests,
                 targetLanguage: target,
               });
+              if (cancelled()) return applied;
             } catch {
               response = null;
             }
@@ -878,7 +989,7 @@
         if (canLazy) window.removeEventListener("scroll", onScroll);
         if (scrollTimer !== null) clearTimeout(scrollTimer);
         for (const unit of units) {
-          if (unit.element) delete unit.element.__tpUnit;
+          if (unit.element?.__tpUnit === unit) delete unit.element.__tpUnit;
         }
       }
 
@@ -892,35 +1003,22 @@
      * @return {Object} 恢复结果
      */
     restorePage() {
+      this.translationGeneration++;
       this.restoring = true;
       this.suppressMutations(true);
       this.detachObserver();
+
+      // 属性属于译文里的活节点，必须在正文恢复并重新排列内联节点之前还原。
+      if (this.savedAttrText.length > 0) {
+        DOM.restoreAttributeTexts(this.savedAttrText);
+        this.savedAttrText = [];
+      }
 
       let restored = 0;
       // 逆序恢复：浅层单元先于其块级子单元恢复，避免互相覆盖
       for (let index = this.units.length - 1; index >= 0; index--) {
         if (this.units[index].restore()) restored++;
       }
-
-      // 属性文本单独还原：单元里没有它们的位置。
-      // 注意元素可能已被正文翻译 clone 替换（<img alt> 这类内联 void 元素），
-      // 此时记录里的 element 已脱离文档；必须沿各单元的 cloneMap 找到
-      // 屏幕上那个活节点再写回，否则「显示原文」之后 alt 仍是译文。
-      if (this.savedAttrText && this.savedAttrText.length > 0) {
-        const alive = item => {
-          if (!item || !item.element) return null;
-          if (item.element.isConnected) return item.element;
-          for (const unit of this.units) {
-            if (!unit.cloneMap || unit.cloneMap.size === 0) continue;
-            const clone = unit.cloneMap.get(item.element);
-            if (clone && clone.isConnected) return clone;
-          }
-          return item.element; // 找不到就照旧写回（至少不静默丢弃）
-        };
-        DOM.restoreAttributeTexts(this.savedAttrText, alive);
-        this.savedAttrText = [];
-      }
-      this.attributeEntries = [];
 
       this.units = [];
       this.state = "idle";
@@ -940,7 +1038,9 @@
     async translateNewContent(roots) {
       if (this.state !== "translated") return;
 
+      const generation = this.translationGeneration;
       const settings = await this.loadSettings();
+      if (generation !== this.translationGeneration) return;
       if (!settings) return;
 
       // 同一批几百条记录里，同一个根节点会被重复 push，
@@ -997,10 +1097,15 @@
       }
 
       this.units.push(...fresh);
-      if (OFFLINE && OFFLINE.supported) {
+      if (settings.useOffline !== "off" && OFFLINE && OFFLINE.supported) {
         // 端侧能翻就先翻，剩下的交给在线引擎
-        await this.translateOffline(fresh, settings.sourceLanguage || "auto", settings.targetLanguage);
+        const from = settings.sourceLanguage || "auto";
+        const target = settings.targetLanguage;
+        const { ok } = await waitForOffline(from, target);
+        if (generation !== this.translationGeneration || this.state !== "translated" || this.restoring) return;
+        if (ok) await this.translateOffline(fresh, from, target);
       }
+      if (generation !== this.translationGeneration) return;
       const remaining = fresh.filter(unit => !unit.translated);
       if (remaining.length > 0) {
         await this.translateUnits(remaining, settings.targetLanguage, { lazy: settings.lazyTranslate !== "off" });
@@ -1095,10 +1200,14 @@
 
         if (roots.length === 0) return;
 
+        // 同一个合批窗口内可能触发多次回调，重设计时器不能丢掉前面收到的根节点。
+        for (const root of roots) self.pendingMutationRoots.add(root);
         if (self.mutationTimer !== null) clearTimeout(self.mutationTimer);
         self.mutationTimer = window.setTimeout(() => {
           self.mutationTimer = null;
-          self.translateNewContent(roots).catch(() => {});
+          const pending = [...self.pendingMutationRoots];
+          self.pendingMutationRoots.clear();
+          self.translateNewContent(pending).catch(() => {});
         }, MUTATION_DEBOUNCE_MS);
       });
       this.observer.observe(document.body, {
@@ -1120,6 +1229,7 @@
         clearTimeout(this.mutationTimer);
         this.mutationTimer = null;
       }
+      this.pendingMutationRoots.clear();
     },
 
     /**
@@ -1305,8 +1415,14 @@
       // 预热错误的语言对，真正翻译时还得在无手势上下文里重新下载模型而被拒。
       // content script 默认可访问 chrome.storage；一次读取在瞬时激活窗口内完成，不丢手势。
       if (OFFLINE && OFFLINE.supported && chrome.storage && chrome.storage.sync) {
-        Promise.resolve(chrome.storage.sync.get({ sourceLanguage: "auto", targetLanguage: "zh-CN" }))
-          .then(preferences => OFFLINE.warmup(preferences.sourceLanguage, preferences.targetLanguage))
+        Promise.resolve(
+          chrome.storage.sync.get({ sourceLanguage: "auto", targetLanguage: "zh-CN", useOffline: "auto" })
+        )
+          .then(preferences => {
+            if (preferences.useOffline !== "off") {
+              return OFFLINE.warmup(preferences.sourceLanguage, preferences.targetLanguage);
+            }
+          })
           .catch(() => {});
       }
       controller.translatePage().then(sendResponse);

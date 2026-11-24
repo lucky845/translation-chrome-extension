@@ -591,6 +591,31 @@ test("属性翻译：应用后还原逐字节一致", () => {
   assert.equal(win.document.getElementById("d").innerHTML, original, "还原必须逐字节一致");
 });
 
+test("批量属性回填：重复文案只扫描一次同标签节点，并保留各自的还原位置", () => {
+  const { api, win } = load(`<body>${'<p title="Open help">Read the guide.</p>'.repeat(200)}</body>`);
+  const doc = win.document;
+  const entries = api.collectAttributeTexts(doc.body, "zh-CN");
+  const getByTag = doc.getElementsByTagName.bind(doc);
+  let scans = 0;
+  doc.getElementsByTagName = tag => {
+    if (tag === "p") scans++;
+    return getByTag(tag);
+  };
+  const saved = [];
+  assert.equal(api.applyAttributeTexts(entries, new Map([["Open help", "打开帮助"]]), saved), 200);
+  assert.equal(scans, 1, "同一批次不应为每个属性重复扫描文档");
+  assert.deepEqual(
+    saved.map(item => item.ordinal),
+    Array.from({ length: 200 }, (_, index) => index)
+  );
+  const translatedHtml = doc.body.innerHTML;
+  doc.body.innerHTML = translatedHtml;
+  scans = 0;
+  api.restoreAttributeTexts(saved);
+  assert.equal(scans, 1, "节点被重建后，同一标签也只应扫描一次");
+  assert.equal(doc.querySelectorAll('p[title="Open help"]').length, 200);
+});
+
 test("属性已是目标语言时不采集（中文 title 不再翻）", () => {
   const { api, win } = load(`<html lang="zh-CN"><body><a href="/x" title="打开设置面板">设置</a></body></html>`);
   const entries = api.collectAttributeTexts(win.document.body, "zh-CN");
@@ -603,6 +628,67 @@ test("属性扫描不被 SKIP_TAGS 拦住（placeholder/aria-label 要能翻）"
   );
   const entries = api.collectAttributeTexts(win.document.body, "zh-CN");
   assert.equal(entries.length, 2, `input/button 属性必须能采到，实际: ${entries.length}`);
+});
+
+test("属性过滤：文件名/日期/版本号/占比这类标识符不送翻（真机首屏 8 秒空白回归）", () => {
+  const { api } = load(`<html lang="en"><body></body></html>`);
+  // 逐条取自 GitHub 仓库页的真实属性值。这些东西送翻既没意义，又会阻塞正文。
+  const identifiers = [
+    "dsh-cabinet-mode",
+    ".github",
+    ".gitattributes",
+    "package-lock.json",
+    "https://luodaoyi.github.io/dsh-cabinet-mode/",
+    "Nov 17, 2026, 18:51 GMT+8",
+    "2026年11月17日18:51 GMT+8",
+    "v0.9.3",
+    ".github, (Directory)",
+    "README.md（文件）",
+    "package-lock.json, (File)",
+    "JavaScript：93.4%",
+    "CSS: 1.5%",
+  ];
+  for (const text of identifiers) {
+    assert.equal(api.isIdentifierAttr(text), true, `应判为标识符: ${JSON.stringify(text)}`);
+  }
+
+  // 反向：真正该翻的自然语言一条都不能被误杀
+  const naturals = [
+    "Open settings panel",
+    "Copy code to clipboard",
+    "Permalink: Cabinet Mode (内阁模式) for DeepSeek Harness",
+    "fix: integrate reviewed cabinet UI safely for v0.9.3",
+    "ci: generate the website changelog from published releases",
+    "Search docs",
+    // 单个英文单词：无空格、无标点，但它是自然语言，必须翻。
+    // 真机回归：`alt="tower"` 曾被「无空格=标识符」的粗判据误杀，图片替代文本
+    // 永远停在英文，e2e 用例精确报红。
+    "tower",
+    "Search",
+    "Settings",
+    "Loading",
+  ];
+  for (const text of naturals) {
+    assert.equal(api.isIdentifierAttr(text), false, `不该判为标识符: ${JSON.stringify(text)}`);
+  }
+});
+
+test("属性过滤：collectAttributeTexts 端到端剔除标识符，自然语言照常采集", () => {
+  const { api, win } = load(
+    `<html lang="en"><body><div id="d">` +
+      `<a href="/x" title="dsh-cabinet-mode">a</a>` +
+      `<a href="/y" title="Copy code to clipboard">b</a>` +
+      `<span aria-label=".github, (Directory)">c</span>` +
+      `<span aria-label="Close dialog">d</span>` +
+      `<img alt="v0.9.3" src="g.png">` +
+      `<img alt="Settings gear" src="h.png">` +
+      `</div></body></html>`
+  );
+  const got = api
+    .collectAttributeTexts(win.document.getElementById("d"), "zh-CN")
+    .map(e => e.text)
+    .sort();
+  assert.deepEqual(got, ["Close dialog", "Copy code to clipboard", "Settings gear"], `实际: ${got}`);
 });
 
 console.log("\n[8] 语言判定（P2-5 日语误判修复）");

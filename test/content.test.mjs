@@ -43,7 +43,7 @@ async function loadContent(html, options = {}) {
   if (options.offline) {
     window.Translator = {
       availability: async () => "available",
-      create: async () => ({ translate: async text => `本地[${text}]` }),
+      create: async () => ({ translate: options.offlineTranslate || (async text => `本地[${text}]`) }),
     };
   }
 
@@ -172,6 +172,40 @@ await test("批量翻译后段落被替换为译文", async () => {
   assert.deepEqual(batch.texts, ["Hello one.", "Hello two."], "整段文本作为单元发送，不拆碎");
 });
 
+await test("恢复原文后，旧批次不能覆盖新一轮译文", async () => {
+  const { window, dispatch } = await loadContent("<p>Original paragraph.</p>", {
+    settings: { useOffline: "off", lazyTranslate: "off" },
+  });
+  const runtime = window.chrome.runtime;
+  const send = runtime.sendMessage;
+  let respond;
+  const started = new Promise(resolve => (respond = resolve));
+  let batches = 0;
+  runtime.sendMessage = (message, callback) => {
+    if (message.action !== "translateBatch" || ++batches !== 1) return send(message, callback);
+    respond(() => callback({ ok: true, results: [{ text: "迟到的译文", detected: "en" }] }));
+  };
+  const oldTranslation = dispatch({ action: "translatePage" });
+  const release = await started;
+  try {
+    await dispatch({ action: "restorePage" });
+    const paragraph = window.document.querySelector("p");
+    assert.equal(paragraph.textContent, "Original paragraph.");
+    assert.equal((await dispatch({ action: "translatePage" })).success, true);
+    release();
+    const old = await oldTranslation;
+    assert.equal(old.success, false);
+    assert.match(old.error, /取消/);
+    assert.equal(paragraph.textContent, "译[Original paragraph.]");
+    assert.equal((await dispatch({ action: "getStatus" })).state, "translated");
+  } finally {
+    release();
+    await oldTranslation;
+    await dispatch({ action: "restorePage" });
+    window.close();
+  }
+});
+
 await test("恢复后 DOM 回到原文", async () => {
   const { window, dispatch } = await loadContent("<p>Hello one.</p>");
   await dispatch({ action: "translatePage" });
@@ -247,6 +281,123 @@ await test("端侧可用时走本地，不发任何在线请求", async () => {
 
   const online = sent.filter(m => m.action === "translateBatch" || m.action === "translateText");
   assert.equal(online.length, 0, `端侧成功时不应请求在线引擎，实际 ${online.length} 次`);
+});
+
+await test("端侧首屏优先、逐段回填，滚动后优先翻新进入视口的段落", async () => {
+  const calls = [];
+  let secondStarted;
+  const started = new Promise(resolve => (secondStarted = resolve));
+  let releaseSecond;
+  const blocked = new Promise(resolve => (releaseSecond = resolve));
+  const { window, sent, dispatch } = await loadContent(
+    "<p>Far paragraph.</p><p>Visible paragraph.</p><p>Still far paragraph.</p><p>Next paragraph.</p>",
+    {
+      offline: true,
+      offlineTranslate: async text => {
+        calls.push(text);
+        if (calls.length === 2) {
+          secondStarted();
+          await blocked;
+        }
+        return `本地[${text}]`;
+      },
+    }
+  );
+  const [far, near, stillFar, next] = window.document.querySelectorAll("p");
+  const setTop = (element, top) => {
+    element.getBoundingClientRect = () => ({ top, bottom: top + 30, width: 300, height: 30 });
+  };
+  setTop(far, 2000);
+  setTop(near, 20);
+  setTop(stillFar, 2500);
+  setTop(next, 3000);
+  const pending = dispatch({ action: "translatePage" });
+  try {
+    await Promise.race([started, pending]);
+    assert.deepEqual(calls, ["Visible paragraph.", "Far paragraph."]);
+    assert.match(near.textContent, /本地/);
+    assert.equal(far.textContent, "Far paragraph.");
+    setTop(next, 20);
+    setTop(near, -2000);
+    // 页面里的独立滚动面板发出不冒泡的 scroll 事件。
+    next.parentElement.dispatchEvent(new window.Event("scroll"));
+  } finally {
+    releaseSecond();
+    await pending;
+  }
+  assert.deepEqual(calls, ["Visible paragraph.", "Far paragraph.", "Next paragraph.", "Still far paragraph."]);
+  assert.match(next.textContent, /本地/);
+  assert.equal(sent.filter(m => m.action === "translateBatch").length, 0);
+});
+
+await test("端侧译文保留链接和强调，恢复后回到原始结构", async () => {
+  const calls = [];
+  const { window, sent, dispatch } = await loadContent(
+    '<p>Read the <a href="/docs">guide</a> and <strong>start</strong>.</p>',
+    {
+      offline: true,
+      offlineTranslate: async text => {
+        calls.push(text);
+        return "请先<a i=1>开始</a>，再阅读<a i=0>指南</a>。";
+      },
+    }
+  );
+  const paragraph = window.document.querySelector("p");
+  const original = paragraph.innerHTML;
+  await dispatch({ action: "translatePage" });
+  assert.equal(paragraph.textContent, "请先开始，再阅读指南。");
+  assert.equal(paragraph.querySelector("a").getAttribute("href"), "/docs");
+  assert.equal(paragraph.querySelector("a").textContent, "指南");
+  assert.equal(paragraph.firstElementChild.tagName, "STRONG");
+  assert.deepEqual(calls, ["Read the <a i=0>guide</a> and <a i=1>start</a>."]);
+  assert.equal(sent.filter(m => m.action === "translateBatch").length, 0);
+  await dispatch({ action: "restorePage" });
+  assert.equal(paragraph.innerHTML, original);
+});
+
+await test("端侧只对丢失占位符的段落重试纯文本，不显示破损标记", async () => {
+  const calls = [];
+  const { window, sent, dispatch } = await loadContent(
+    '<p>Read the <a href="/docs">guide</a> today.</p><p>Next step.</p>',
+    {
+      offline: true,
+      offlineTranslate: async text => {
+        calls.push(text);
+        if (text.includes("<a i=")) return "损坏的标记<a i=99>";
+        return text === "Next step." ? "下一步。" : "今天阅读指南。";
+      },
+    }
+  );
+  await dispatch({ action: "translatePage" });
+  const [first, second] = window.document.querySelectorAll("p");
+  assert.match(first.textContent, /今天阅读指南/);
+  assert.doesNotMatch(first.textContent, /损坏|<a i=/);
+  assert.equal(second.textContent, "下一步。");
+  assert.equal(calls.length, 3);
+  assert.match(calls[0], /<a i=0>/);
+  assert.doesNotMatch(calls[1], /<a i=/);
+  assert.equal(calls[2], "Next step.");
+  assert.equal(sent.filter(m => m.action === "translateBatch").length, 0);
+});
+
+await test("端侧单段失败不丢掉成功译文，也不影响后续端侧翻译", async () => {
+  const { window, sent, dispatch } = await loadContent(
+    "<p>First success.</p><p>Failed paragraph.</p><p>Last success.</p>",
+    {
+      offline: true,
+      offlineTranslate: async text => {
+        if (text === "Failed paragraph.") throw new Error("mock offline failure");
+        return `本地[${text}]`;
+      },
+    }
+  );
+  await dispatch({ action: "translatePage" });
+  const [first, failed, last] = window.document.querySelectorAll("p");
+  assert.match(first.textContent, /本地/);
+  assert.match(last.textContent, /本地/);
+  assert.match(failed.textContent, /译\[/);
+  const requests = sent.filter(m => m.action === "translateBatch").flatMap(m => Array.from(m.texts));
+  assert.deepEqual(requests, ["Failed paragraph."]);
 });
 
 await test("浏览器不支持端侧时自动回落在线引擎", async () => {
@@ -326,6 +477,100 @@ await test("translatedStyle 注入对应 CSS 规则", async () => {
 
 console.log("\n[2] 动态内容（滚动加载 / SPA 新增）");
 
+await test("关闭端侧翻译后，动态新增段落也直接走在线", async () => {
+  const calls = [];
+  const { window, sent, dispatch } = await loadContent("<p>Initial text.</p>", {
+    offline: true,
+    storage: true,
+    storageValues: { useOffline: "off" },
+    settings: { useOffline: "off" },
+    offlineTranslate: async text => {
+      calls.push(text);
+      return `本地[${text}]`;
+    },
+  });
+  let creates = 0;
+  const create = window.Translator.create;
+  window.Translator.create = async options => {
+    creates++;
+    return create(options);
+  };
+  await dispatch({ action: "translatePage" });
+  const added = window.document.createElement("p");
+  added.textContent = "Dynamically added later.";
+  window.document.body.appendChild(added);
+  await new Promise(resolve => setTimeout(resolve, 700));
+  assert.equal(creates, 0, "关闭端侧翻译后不应初始化模型");
+  assert.deepEqual(calls, []);
+  assert.equal(added.textContent, "译[Dynamically added later.]");
+  assert.ok(
+    sent.some(message => message.action === "translateBatch" && message.texts.includes("Dynamically added later."))
+  );
+});
+
+await test("端侧模型仍在准备时，动态新增段落不会无限等待", async () => {
+  const { window, sent, dispatch } = await loadContent("<p>Initial text.</p>", { offline: true });
+  let finishModel;
+  window.Translator.create = () => new Promise(resolve => (finishModel = resolve));
+  try {
+    await dispatch({ action: "translatePage" });
+    const added = window.document.createElement("p");
+    added.textContent = "Dynamically added while the model is pending.";
+    const applied = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        observer.disconnect();
+        reject(new Error("模型未就绪时，新增段落应回退在线翻译"));
+      }, 3500);
+      const observer = new window.MutationObserver(() => {
+        if (!added.hasAttribute("data-tp-translated")) return;
+        clearTimeout(timeout);
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(added, { attributes: true, attributeFilter: ["data-tp-translated"] });
+    });
+    window.document.body.appendChild(added);
+    await applied;
+    assert.equal(added.textContent, "译[Dynamically added while the model is pending.]");
+    assert.ok(
+      sent.some(
+        message =>
+          message.action === "translateBatch" && message.texts.includes("Dynamically added while the model is pending.")
+      )
+    );
+  } finally {
+    finishModel?.({ translate: async text => `本地[${text}]` });
+    await dispatch({ action: "restorePage" });
+    window.close();
+  }
+});
+
+await test("同一合批窗口内多次新增内容，不会漏掉先到的段落", async () => {
+  const { window, sent, dispatch } = await loadContent("<p>Initial text.</p>");
+  try {
+    await dispatch({ action: "translatePage" });
+    const first = window.document.createElement("p");
+    first.textContent = "First new paragraph.";
+    window.document.body.appendChild(first);
+    // 让 MutationObserver 先收到第一段，再在同一个合批窗口内追加第二段。
+    await Promise.resolve();
+    const second = window.document.createElement("p");
+    second.textContent = "Second new paragraph.";
+    window.document.body.appendChild(second);
+    await new Promise(resolve => setTimeout(resolve, 700));
+    assert.equal(first.textContent, "译[First new paragraph.]");
+    assert.equal(second.textContent, "译[Second new paragraph.]");
+    const batches = sent.filter(
+      message => message.action === "translateBatch" && message.texts.includes("First new paragraph.")
+    );
+    assert.equal(batches.length, 1);
+    assert.ok(batches[0].texts.includes("Second new paragraph."));
+  } finally {
+    await dispatch({ action: "restorePage" });
+    window.close();
+  }
+});
+
 await test("翻译完成后新增的段落会被增量翻译", async () => {
   const { window, dispatch } = await loadContent("<p>Hello one.</p>");
   await dispatch({ action: "translatePage" });
@@ -355,6 +600,16 @@ await test("超长单元被切成多片发送，且占位符不被切开", async
   for (const piece of batch.texts) {
     assert.ok(piece.length <= 1200, `单片过长: ${piece.length}`);
   }
+});
+
+await test("在线长段分片不拆坏域名、版本号或小数", async () => {
+  const sentence = "See docs.example.com for v1.2.3 and the 3.14 baseline. ";
+  const longText = sentence.repeat(55).trim();
+  const { sent, dispatch } = await loadContent(`<p>${longText}</p>`);
+  await dispatch({ action: "translatePage" });
+  const batch = sent.find(message => message.action === "translateBatch");
+  assert.ok(batch.texts.length > 1, "应触发长段分片");
+  assert.equal(batch.texts.join(" "), longText, "分片不应改写段内标点或断开单词");
 });
 
 await test("分片译文按序拼回，整段内容不丢不重", async () => {
@@ -654,6 +909,48 @@ await test("引擎连续拒绝时立刻收工，不让用户白等", async () =>
 });
 
 console.log("\n[回归 v1.1.4] 属性文本翻译");
+
+await test("端侧优先：同文案的多个属性只翻一次，所有节点都补齐且可还原", async () => {
+  const calls = [];
+  const { window, sent, dispatch } = await loadContent(
+    '<p title="Open help">Read the guide.</p><p title="Open help" aria-label="Open help">See the examples.</p>',
+    {
+      offline: true,
+      offlineTranslate: async text => {
+        calls.push(text);
+        return `本地[${text}]`;
+      },
+    }
+  );
+  const [first, second] = window.document.querySelectorAll("p");
+  await dispatch({ action: "translatePage" });
+  assert.deepEqual(calls, ["Read the guide.", "See the examples.", "Open help"]);
+  assert.equal(first.title, "本地[Open help]");
+  assert.equal(second.title, "本地[Open help]");
+  assert.equal(second.getAttribute("aria-label"), "本地[Open help]");
+  assert.equal(sent.filter(message => message.action === "translateBatch").length, 0);
+  await dispatch({ action: "restorePage" });
+  assert.equal(first.title, "Open help");
+  assert.equal(second.title, "Open help");
+  assert.equal(second.getAttribute("aria-label"), "Open help");
+});
+
+await test("只有端侧未翻出的属性进入在线回退", async () => {
+  const { window, sent, dispatch } = await loadContent(
+    '<p title="Missing help" aria-label="Open guide">Read the guide.</p>',
+    {
+      offline: true,
+      offlineTranslate: async text => (text === "Missing help" ? text : `本地[${text}]`),
+    }
+  );
+  await dispatch({ action: "translatePage" });
+  const paragraph = window.document.querySelector("p");
+  assert.equal(paragraph.title, "译[Missing help]");
+  assert.equal(paragraph.getAttribute("aria-label"), "本地[Open guide]");
+  const batches = sent.filter(message => message.action === "translateBatch");
+  assert.equal(batches.length, 1);
+  assert.deepEqual(Array.from(batches[0].texts), ["Missing help"]);
+});
 await test("placeholder / title 属性文本被翻译（translateBatch 返回对象数组）", async () => {
   const { window, dispatch } = await loadContent(
     '<input id="q" placeholder="Search the docs"><p title="Open the menu">Hello one.</p>'
@@ -672,16 +969,28 @@ await test("placeholder / title 属性文本被翻译（translateBatch 返回对
 
 await test("内联 void 元素（img）的 alt 在正文翻译后仍然保留译文", async () => {
   // 正文应用译文时会把内联元素 cloneNode(false) 重建，原元素脱离文档。
-  // 若属性翻译发生在正文之后，setAttribute 打在已脱离的旧节点上，
-  // 可见的克隆体仍是英文 alt（真机实测 <img alt="tower"> → 翻完仍是 tower）。
-  const { window, dispatch } = await loadContent(
+  // 先回填正文，再扫描属性并直接采集已连入文档的克隆体。
+  const { window, sent, dispatch } = await loadContent(
     '<p>The keeper climbed <img id="tower" src="/x.png" alt="tower"> every morning.</p>'
   );
+  const original = window.document.getElementById("tower");
+  const scannedImages = [];
+  const collect = window.__TP_DOM__.collectAttributeTexts;
+  window.__TP_DOM__.collectAttributeTexts = (...args) => {
+    scannedImages.push(window.document.getElementById("tower"));
+    return collect(...args);
+  };
   const result = await dispatch({ action: "translatePage" });
   assert.equal(result.success, true, result.error || "");
   const img = window.document.getElementById("tower");
   assert.ok(img, "<img> 必须仍在文档中");
   assert.ok(img.isConnected, "<img> 必须仍在文档中（不是脱离的旧节点）");
+  assert.notEqual(img, original, "正文回填应重建内联图像");
+  assert.equal(scannedImages.length, 1, "属性只扫描一次");
+  assert.equal(scannedImages[0], img, "属性扫描应看到正文回填后新建的图像节点");
+  const batches = sent.filter(message => message.action === "translateBatch");
+  assert.match(batches[0].texts[0], /The keeper climbed/);
+  assert.deepEqual(Array.from(batches[1].texts), ["tower"]);
   assert.equal(
     img.getAttribute("alt"),
     "译[tower]",

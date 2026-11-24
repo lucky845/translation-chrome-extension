@@ -42,12 +42,22 @@ const ENDPOINT_API_KEY = "AIzaSyATBXajvzQLTDHEQbcpq0Ihe0vWDHmO520";
 // 模型标识，Chrome 自带翻译固定发 "te_lib"。
 const ENDPOINT_MODEL = "te_lib";
 
-// 单次请求上限。实测 Chrome 自带翻译单包 97 条；我们的批大小 120，
-// 直接对齐即可（JSON body 没有 URL 长度限制，这里是结果数量稳定性的上限）。
+// 单次请求上限。实测 Chrome 自带翻译单包最大 97 条；取 120 留一点余量。
+// 注意这不是分块的主要依据——真正的预算见 MAX_BODY_CHARS。
 const MAX_TEXTS_PER_CHUNK = 120;
-// 每个请求体的字符预算。POST 不受 URL 长度约束，这里保守取 6000，
-// 避免单个包体过大拖慢响应；超出就再切一块。
-const MAX_URL_CHARS = 6000;
+
+// 每个请求体的字符预算，对齐 Chrome 自带翻译的实测值。
+//
+// 官方数据（github.com.har，同一页面）：3 个请求体分别是
+//   8 条 / 2998 字符、97 条 / 2715 字符、48 条 / 2989 字符
+// ——条数差异巨大但字符数都在 3000 附近，说明它唯一的打包依据是字符预算。
+//
+// 历史教训：这里原本是 MAX_URL_CHARS = 6000，配 encodeURIComponent 计算代价，
+// 那是 translate_a/t 用 GET、文本全塞进 URL 的时代留下的逻辑。中文经 URL
+// 编码膨胀约 9 倍，预算被瞬间吃光，同一页面被切成 49 个包（官方只要 3 个），
+// 还切出 texts=1（5 个字符）这种碎片。POST 没有 URL 长度问题，
+// 代价直接按正文字符数算即可。
+const MAX_BODY_CHARS = 4000;
 
 // 并发上限。实测 20 并发 1.84s 全成功，但页面翻译取保守值避免触发限流。
 const MAX_CONCURRENCY = 3;
@@ -619,32 +629,29 @@ export class LingvaEngine extends BaseEngine {
 function splitIntoChunks(texts) {
   const chunks = [];
   let current = [];
-  let urlChars = 0;
+  let bodyChars = 0;
 
   for (const text of texts) {
-    // "q=" 前缀 + 编码后的内容 + "&" 分隔符
-    const cost = encodeURIComponent(text).length + 3;
+    // POST 的 JSON body 里，正文是按字符计的体积，不再有 URL 编码膨胀。
+    const cost = text.length;
 
-    // 单条自身就超限时独占一块。
+    // 单条自身就超预算时独占一块。
     // 历史：旧写法只有 `current.length > 0` 守卫，超长单条会绕过全部长度判断。
-    // 但真机实测 URL 12555 字符（1600 个汉字）仍返回 200，说明 MAX_URL_CHARS
-    // 只是留余量，不是 Google 的硬限；分块结果两种写法都是对的（旧代码切 3 块、
-    // 新代码也 3 块），所以这里只是把意图写明确，不是修 bug。
-    // 保留此分支的意义：将来若调小 MAX_URL_CHARS 或换端点，行为仍然正确。
-    if (current.length > 0 && (current.length >= MAX_TEXTS_PER_CHUNK || urlChars + cost > MAX_URL_CHARS)) {
+    if (current.length > 0 && (current.length >= MAX_TEXTS_PER_CHUNK || bodyChars + cost > MAX_BODY_CHARS)) {
       chunks.push(current);
       current = [];
-      urlChars = 0;
+      bodyChars = 0;
     }
 
-    if (cost > MAX_URL_CHARS) {
-      // 单条超长：交给上层按句切分后重试，这里先独占一块保证不丢内容
+    if (cost > MAX_BODY_CHARS) {
+      // 单条超长：独占一块。上层 content.js 的 splitForEngine 已按句切过，
+      // 走到这里说明单条本身就超过了整个预算，再切也只会更碎，直接单发。
       chunks.push([text]);
       continue;
     }
 
     current.push(text);
-    urlChars += cost;
+    bodyChars += cost;
   }
   if (current.length > 0) chunks.push(current);
 

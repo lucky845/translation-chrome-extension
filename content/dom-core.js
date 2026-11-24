@@ -1144,6 +1144,46 @@
   }
   const TRANSLATABLE_ATTRS = ["title", "alt", "aria-label", "placeholder"];
 
+  /** 文件名 + 类型尾缀：`.github, (Directory)` / `README.md（文件）` / `src, (Directory)` */
+  const FILENAME_LABEL_RE = /^[^\s,，()（）]+[,\s，]*(\(|（)?\s*(File|Directory|文件|目录|文件夹)\s*(\)|）)?$/i;
+  /** 语言占比统计：`JavaScript：93.4%` / `CSS: 1.5%` */
+  const PERCENT_LABEL_RE = /^[\w+#.-]+\s*[：:]\s*\d+(\.\d+)?\s*%$/;
+  /** 英文日期：`Nov 17, 2026, 18:51 GMT+8` @param {string} text @return {boolean} */
+  const looksLikeDate = text =>
+    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b.*\d{4}/.test(text) || /\d{4}\s*年\s*\d{1,2}\s*月/.test(text);
+
+  /**
+   * 判断属性值是不是「不该翻译的标识符」。
+   *
+   * 真机实测（GitHub 仓库页）：全页 103 个可翻属性里，绝大多数是
+   * `title=".github"`、`title="Nov 17, 2026, 18:51 GMT+8"`、
+   * `aria-label="package-lock.json, (File)"` 这类文件名/日期/统计。
+   * 它们送翻只有坏处：正文翻译要 await 这一轮属性请求，
+   * 于是页面开头有好几秒一段译文都没有（实测 8.2 秒空白）。
+   *
+   * 只认「一眼就能看出不是自然语言」的形态，宁漏放不误杀——
+   * 误杀会让本该翻的提示语永远停在英文。
+   * @param {string} text 属性值
+   * @return {boolean} true 表示是标识符，不送翻
+   */
+  function isIdentifierAttr(text) {
+    const value = String(text || "").trim();
+    if (!value) return true;
+    if (/^(https?:\/\/|www\.)/i.test(value)) return true; // URL
+    // 文件名/路径/用户名：无空格且**必须带标识符特征**。
+    // 不能只看「无空格」——`alt="tower"`、`title="Search"` 这种单个英文单词
+    // 也是无空格的，但它们该翻（真机回归：alt="tower" 被误杀后永远停在英文）。
+    // 连字符（`dsh-cabinet-mode`）、点斜杠、下划线、数字、驼峰都算标识符特征；
+    // 普通英文单词里少见 `-` 连接（写作时用空格），所以不会大面积误伤。
+    if (/^[\w./@-]+$/.test(value) && /[-./@_]|\d|^[a-z]+[A-Z]/.test(value)) return true;
+    if (/^[0-9a-f]{7,40}$/i.test(value)) return true; // commit hash
+    if (looksLikeDate(value)) return true;
+    if (/^v?\d+\.\d+/.test(value)) return true; // 版本号
+    if (FILENAME_LABEL_RE.test(value)) return true; // 文件名 + (File)
+    if (PERCENT_LABEL_RE.test(value)) return true; // 语言占比
+    return false;
+  }
+
   /**
    * 采集整页的属性文本（title / alt / aria-label / placeholder）。
    *
@@ -1155,9 +1195,9 @@
    * @param {string} targetLanguage 目标语言
    * @return {Array<{element: Element, attr: string, text: string}>} 待翻译属性
    */
-  function collectAttributeTexts(root, targetLanguage) {
+  function collectAttributeTexts(root, targetLanguage, translatedElements) {
     const found = [];
-    const seen = new Set();
+    // 保留每个属性槽位；传入引擎的文本在请求层去重。
     const base = root || (typeof document !== "undefined" ? document.body : null);
     if (!base || !base.querySelectorAll) return found;
 
@@ -1169,7 +1209,9 @@
       // 属性扫描只看「是不是确实不可见」和「是不是脚本/样式」。
       const tag = element.tagName.toLowerCase();
       if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") continue;
-      if (element.matches && element.matches('[translate="no"], .notranslate, [aria-hidden="true"]')) continue;
+      if (element.matches('[translate="no"], [aria-hidden="true"]')) continue;
+      // 正文回填会自行加 .notranslate；它不应拦住同一单元的属性翻译。
+      if (element.classList.contains("notranslate") && !translatedElements?.has(element)) continue;
       if (element.closest && element.closest("svg")) continue;
       for (const attr of TRANSLATABLE_ATTRS) {
         const raw = element.getAttribute && element.getAttribute(attr);
@@ -1178,9 +1220,8 @@
         // 空串、纯符号、单字属性不送翻（按钮上的 "OK" 翻成"好"反而怪）
         if (text.length < 2 || !/\p{L}/u.test(text)) continue;
         if (isAlreadyTarget(text, targetLanguage)) continue;
-        const key = attr + "::" + text;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        // 文件名/日期/版本号/统计占比：翻不出有意义的结果，只会白白拖慢首屏
+        if (isIdentifierAttr(text)) continue;
         found.push({ element, attr, text });
       }
     }
@@ -1196,6 +1237,8 @@
    */
   function applyAttributeTexts(entries, translated, saved) {
     if (!entries || !translated || translated.size === 0) return 0;
+    // 每次回填对同一标签只建立一次位置索引，避免逐属性扫描整份文档。
+    const ordinalsByTag = new Map();
     let applied = 0;
     for (const entry of entries) {
       const next = translated.get(entry.text);
@@ -1215,9 +1258,16 @@
           ordinal: -1,
         });
         const record = saved[saved.length - 1];
-        if (record.tag && typeof document !== "undefined" && document.querySelectorAll) {
-          const sameTag = Array.from(document.getElementsByTagName(record.tag));
-          record.ordinal = sameTag.indexOf(entry.element);
+        if (record.tag && typeof document !== "undefined" && document.getElementsByTagName) {
+          if (!ordinalsByTag.has(record.tag)) {
+            const ordinals = new Map();
+            const sameTag = document.getElementsByTagName(record.tag);
+            for (let index = 0, length = sameTag.length; index < length; index++) {
+              ordinals.set(sameTag[index], index);
+            }
+            ordinalsByTag.set(record.tag, ordinals);
+          }
+          record.ordinal = ordinalsByTag.get(record.tag).get(entry.element) ?? -1;
         }
       }
       entry.element.setAttribute(entry.attr, next);
@@ -1234,13 +1284,17 @@
    */
   function restoreAttributeTexts(saved, resolveElement) {
     if (!saved) return;
+    const elementsByTag = new Map();
     for (const item of saved) {
       try {
         // 解析顺序：调用方给的溯源函数 → 原引用（仍在文档中）→ 按 tag+序号重新定位
         let target = resolveElement ? resolveElement(item) : item.element;
         if (!target || target.isConnected === false) {
           if (item.tag && typeof document !== "undefined" && document.getElementsByTagName) {
-            const sameTag = Array.from(document.getElementsByTagName(item.tag));
+            if (!elementsByTag.has(item.tag)) {
+              elementsByTag.set(item.tag, Array.from(document.getElementsByTagName(item.tag)));
+            }
+            const sameTag = elementsByTag.get(item.tag);
             if (item.ordinal >= 0 && item.ordinal < sameTag.length) target = sameTag[item.ordinal];
           }
         }
@@ -1267,6 +1321,7 @@
     containsHanText,
     hanRatio,
     isAlreadyTarget,
+    isIdentifierAttr,
     collectAttributeTexts,
     applyAttributeTexts,
     restoreAttributeTexts,

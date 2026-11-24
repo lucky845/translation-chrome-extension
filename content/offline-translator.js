@@ -31,6 +31,25 @@ let warmupFailure = null;
 /** @type {Map<string, Promise<Object>>} 语言对 → 会话（同一语言对只创建一次） */
 const sessionCache = new Map();
 
+// 只保留当前文档内的成功译文，不写 storage；限制条数与单项长度，避免长页面无限占内存。
+const RESULT_CACHE_LIMIT = 256;
+const RESULT_CACHE_MAX_CHARS = 2048;
+const resultCache = new Map();
+const pendingResults = new Map();
+
+// 仅合并可缓存的纯文本请求；完成或失败都移除在途记录。
+async function translateOnce(session, text, key) {
+  if (key === null) return session.translate(text);
+  if (pendingResults.has(key)) return pendingResults.get(key);
+  const pending = session.translate(text);
+  pendingResults.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    pendingResults.delete(key);
+  }
+}
+
 /**
  * 当前浏览器是否提供内置端侧翻译。
  * @return {boolean} 是否支持
@@ -126,9 +145,30 @@ async function translate(texts, fromLang, toLang) {
       results.push({ text: text || "", detected: null });
       continue;
     }
+    // 结构化译文需要在 DOM 层校验，不在这里缓存。
+    const cacheable = trimmed.length <= RESULT_CACHE_MAX_CHARS && !/<a i=|\{\{\/?\d+\}\}/.test(trimmed);
+    const key = cacheable ? JSON.stringify([normalizeLang(fromLang), normalizeLang(toLang), trimmed]) : null;
+    const detected = fromLang === "auto" ? null : fromLang;
+    if (key !== null && resultCache.has(key)) {
+      const text = resultCache.get(key);
+      resultCache.delete(key);
+      resultCache.set(key, text);
+      results.push({ text, detected });
+      continue;
+    }
     try {
-      const out = await session.translate(trimmed);
-      results.push({ text: out, detected: fromLang === "auto" ? null : fromLang });
+      const out = await translateOnce(session, trimmed, key);
+      if (
+        key !== null &&
+        typeof out === "string" &&
+        out.length <= RESULT_CACHE_MAX_CHARS &&
+        out.trim() &&
+        out.trim() !== trimmed
+      ) {
+        resultCache.set(key, out);
+        if (resultCache.size > RESULT_CACHE_LIMIT) resultCache.delete(resultCache.keys().next().value);
+      }
+      results.push({ text: out, detected });
     } catch (error) {
       throw new Error("端侧翻译失败：" + String((error && error.message) || error), {
         cause: error,

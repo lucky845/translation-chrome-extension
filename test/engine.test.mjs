@@ -394,6 +394,56 @@ await test("echo：引擎原样退回的结果不得写入缓存，且必须回�
   clearCache();
 });
 
+await test("echo：只挪动空格的伪译文也必须识别出来（真机 bug 回归）", async () => {
+  // 真机 bug：Google 对「英文为主、夹少量中文专名」的段落返回原文，但会顺手调整
+  // 占位符周围的空格。旧判定用 source.trim() === output.trim()，只去首尾，
+  // 中间的空格变化看不见 → 伪译文被当真译文放行 → 写进缓存 + 标记已翻译
+  // → 那段文字永远不再重试。用户反复看到「这一段没翻译」就是这个原因。
+  //
+  // 下面这组数据逐字取自 network-log.har 的真实报文：
+  //   原文 426 字符 → 返回 425 字符，21 个汉字、52 个英文词一个没变。
+  //   差异① `Harness</a>.`  → `Harness</a> .`     句号前多一个空格
+  //   差异② `pick <a i=4>内阁模式</a> when`
+  //        → `pick<a i=4>内阁模式</a>when`          两侧空格被吃掉
+  globalThis.chrome = {
+    storage: {
+      sync: { get: async defaults => ({ ...defaults }), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    },
+  };
+  const { translateTexts, clearCache } = await import("../background/translator.js");
+  clearCache();
+
+  const source =
+    "A small <a i=0>DSH bundle</a> that adds <a i=1>Cabinet Mode</a> " +
+    "(<a i=2>内阁模式</a>) to <a i=3>DeepSeek Harness</a>. Install the bundle, " +
+    "restart DSH, and pick <a i=4>内阁模式</a> when starting a new session.";
+  // 引擎原样退回，只挪了空格
+  const echoed =
+    "A small <a i=0>DSH bundle</a> that adds <a i=1>Cabinet Mode</a> " +
+    "(<a i=2>内阁模式</a>) to <a i=3>DeepSeek Harness</a> . Install the bundle, " +
+    "restart DSH, and pick<a i=4>内阁模式</a>when starting a new session.";
+
+  let calls = 0;
+  await withMockFetch(
+    () => {
+      calls += 1;
+      return new Response(JSON.stringify([[echoed]]), { status: 200 });
+    },
+    async () => {
+      const first = await translateTexts([source], "auto", "zh-CN", "google");
+      assert.equal(first.echoed, 1, "只挪空格的伪译文必须被识别为 echo");
+
+      // 关键：不得写进缓存，否则下一轮直接命中，永远不会重试。
+      const callsAfterFirst = calls;
+      const second = await translateTexts([source], "auto", "zh-CN", "google");
+      assert.equal(calls, callsAfterFirst + 1, "echo 结果不得写入缓存，必须重新请求");
+      assert.equal(second.echoed, 1);
+    }
+  );
+  clearCache();
+});
+
 await test("echo：真译文必须写缓存，不能被 echo 判定误伤", async () => {
   // echo 判定不能把正常翻译也挡在缓存外，否则每次翻同一段都要多付一次请求。
   globalThis.chrome = {
@@ -1073,4 +1123,47 @@ await test("降级链：首选失败后按最近成功排序，而不是死守�
     "lingva",
     `google 失败后应优先最近成功过的 lingva（链序里排在最后），实际先试了 ${order[1]}（顺序: ${order.join(" → ")}）`
   );
+});
+
+// ---------------------------------------------------------------------------
+// 分块打包策略
+// ---------------------------------------------------------------------------
+
+await test("打包：按正文字符预算切块，不受 URL 编码膨胀影响（真机 bug 回归）", async () => {
+  // 真机 bug：切块曾用 encodeURIComponent(text).length 计算代价，那是
+  // translate_a/t 用 GET、文本全塞进 URL 的时代留下的逻辑。中文经 URL 编码
+  // 膨胀约 9 倍，预算被瞬间吃光，同一页面被切成 49 个包（官方只要 3 个），
+  // 还切出 texts=1（5 个字符）这种碎片包，白白多付往返次数和失败机会。
+  //
+  // 官方实测数据（github.com.har）：3 个请求体分别是
+  //   8 条 / 2998 字符、97 条 / 2715 字符、48 条 / 2989 字符
+  // ——条数差异巨大但字符数都在 3000 附近，唯一依据是字符预算。
+  const engine = new GoogleEngine();
+  const seen = [];
+  // 200 条中文，每条 60 字。旧逻辑下每条 URL 编码后约 540 字符，
+  // 6000 的预算只能装 11 条 → 约 19 个包；新逻辑按正文 60 字符算 → 少得多。
+  const texts = Array.from({ length: 200 }, (_, i) => `第${i}条测试文本，`.repeat(8));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    seen.push(body[0][0]);
+    return new Response(JSON.stringify([body[0][0].map(t => `译:${t}`)]), { status: 200 });
+  };
+  try {
+    await engine.translate(texts, "zh-CN", "en");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert.ok(seen.length > 0, "必须实际发出请求");
+  const totalChars = texts.reduce((sum, t) => sum + t.length, 0);
+  assert.ok(
+    seen.length <= Math.ceil(totalChars / 4000) + 1,
+    `包数应按正文字符预算计算，实际 ${seen.length} 个包（总 ${totalChars} 字符）`
+  );
+  for (const chunk of seen) {
+    const chars = chunk.reduce((sum, t) => sum + t.length, 0);
+    assert.ok(chars <= 4000 || chunk.length === 1, `单包正文 ${chars} 字符超出预算，且不是单条独占`);
+  }
+  assert.deepEqual(seen.flat().sort(), texts.slice().sort(), "切块不得丢失或重复任何一条文本");
 });
