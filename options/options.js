@@ -9,44 +9,51 @@
 (function () {
   "use strict";
 
+  // 只存语言码，显示名由 I18N.langName 按界面语言生成。
   const LANGS = [
-    ["zh-CN", "中文（简体）"],
-    ["zh-TW", "中文（繁体）"],
-    ["en", "英语"],
-    ["ja", "日语"],
-    ["ko", "韩语"],
-    ["fr", "法语"],
-    ["de", "德语"],
-    ["es", "西班牙语"],
-    ["ru", "俄语"],
-    ["pt", "葡萄牙语"],
-    ["it", "意大利语"],
-    ["ar", "阿拉伯语"],
-    ["hi", "印地语"],
-    ["th", "泰语"],
-    ["vi", "越南语"],
-    ["id", "印尼语"],
-    ["ms", "马来语"],
-    ["pl", "波兰语"],
-    ["tr", "土耳其语"],
-    ["nl", "荷兰语"],
-    ["sv", "瑞典语"],
-    ["da", "丹麦语"],
-    ["fi", "芬兰语"],
-    ["no", "挪威语"],
-    ["hu", "匈牙利语"],
-    ["cs", "捷克语"],
-    ["ro", "罗马尼亚语"],
-    ["uk", "乌克兰语"],
-    ["el", "希腊语"],
+    "zh-CN",
+    "zh-TW",
+    "en",
+    "ja",
+    "ko",
+    "fr",
+    "de",
+    "es",
+    "ru",
+    "pt",
+    "it",
+    "ar",
+    "hi",
+    "th",
+    "vi",
+    "id",
+    "ms",
+    "pl",
+    "tr",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "no",
+    "hu",
+    "cs",
+    "ro",
+    "uk",
+    "el",
   ];
+
+  const I18N = window.__TP_I18N__ || {
+    t: key => key,
+    raw: () => "",
+    langName: code => code,
+  };
 
   const ENGINE_LABELS = {
     google: "Google",
     mymemory: "MyMemory",
     lingva: "Lingva",
     bing: "Azure Translator",
-    custom: "自定义接口",
+    custom: null, // 走词条，见 engineLabel()
   };
 
   /** 预设定义（来自后台，避免前端重复维护一份）。 */
@@ -158,22 +165,21 @@
    */
   async function checkOffline(els) {
     if (!els.offlineStatus) return;
-    els.offlineStatus.textContent = "检测中…";
+    els.offlineStatus.textContent = I18N.t("offlineStatusChecking");
     els.offlineStatus.className = "state";
     try {
       const tab = await chrome.tabs.query({ active: true, currentWindow: true });
       const tabId = tab && tab[0] && tab[0].id;
       const status = tabId ? await chrome.tabs.sendMessage(tabId, { action: "getStatus" }).catch(() => null) : null;
       if (status && status.offline) {
-        els.offlineStatus.textContent = "✓ 可用（浏览器内置模型，本地推理）";
+        els.offlineStatus.textContent = I18N.t("offlineStatusAvailable");
         els.offlineStatus.className = "state ok";
       } else {
-        els.offlineStatus.textContent =
-          "当前浏览器或页面不支持端侧翻译，将使用下面的在线引擎（Chrome 138+ / Edge 148+）";
+        els.offlineStatus.textContent = I18N.t("offlineStatusUnavailable");
         els.offlineStatus.className = "state warn";
       }
     } catch {
-      els.offlineStatus.textContent = "无法检测（打开任意网页后再查看）";
+      els.offlineStatus.textContent = I18N.t("offlineStatusUnknown");
       els.offlineStatus.className = "state warn";
     }
   }
@@ -194,7 +200,7 @@
       ...presets.map(preset => {
         const option = document.createElement("option");
         option.value = preset.name;
-        option.textContent = preset.label;
+        option.textContent = presetLabel(preset);
         return option;
       })
     );
@@ -206,14 +212,36 @@
    * @param {Array<Array<string>>} langs 语言表
    */
   function fillSelect(select, langs) {
+    if (!select) return;
     select.replaceChildren(
-      ...langs.map(([value, label]) => {
+      ...langs.map(code => {
         const option = document.createElement("option");
-        option.value = value;
-        option.textContent = label;
+        option.value = code;
+        option.textContent = I18N.langName(code);
         return option;
       })
     );
+  }
+
+  /**
+   * 预设显示名：词条存在就用词条，否则用后台给的 label（用户自定义时是原文）。
+   * @param {Object} preset 预设
+   * @return {string} 显示名
+   */
+  function presetLabel(preset) {
+    const key = preset.labelKey;
+    const localized = key ? I18N.raw(key) : "";
+    return localized || preset.label || preset.name;
+  }
+
+  /**
+   * 引擎显示名。
+   * @param {string} name 引擎名
+   * @return {string} 显示名
+   */
+  function engineLabel(name) {
+    if (name === "custom") return I18N.t("engineNameCustom");
+    return ENGINE_LABELS[name] || name;
   }
 
   /**
@@ -319,7 +347,7 @@
     }
 
     await chrome.storage.sync.set(patch);
-    showStatus(els, chrome.i18n.getMessage("settingsSaved") || "设置已保存", "ok");
+    showStatus(els, I18N.t("settingsSaved"), "ok");
     await checkEngine(els);
   }
 
@@ -330,10 +358,10 @@
    */
   async function testCustom(els) {
     const url = els.url.value.trim();
-    setResult(els, "测试中…", "");
+    setResult(els, I18N.t("customTestRunning"), "");
 
     if (!url) {
-      setResult(els, "请先填写接口地址", "warn");
+      setResult(els, I18N.t("customUrlRequired"), "warn");
       return;
     }
 
@@ -358,12 +386,12 @@
         engine: "custom",
       });
       if (response && response.ok) {
-        setResult(els, `连接成功：「Hello, world!」→「${response.translatedText}」`, "ok");
+        setResult(els, I18N.t("customTestSucceeded", response.translatedText), "ok");
       } else {
-        setResult(els, `失败：${(response && response.error) || "未知错误"}`, "warn");
+        setResult(els, I18N.t("customTestFailed", (response && response.error) || I18N.t("unknownError")), "warn");
       }
     } catch (error) {
-      setResult(els, `失败：${error.message || error}`, "warn");
+      setResult(els, I18N.t("customTestFailed", (error && error.message) || error), "warn");
     }
   }
 
@@ -389,7 +417,7 @@
    */
   async function ensurePermission(url) {
     const pattern = originPattern(url);
-    if (!pattern) return { ok: false, error: "接口地址不是合法的 http(s) URL" };
+    if (!pattern) return { ok: false, error: I18N.t("customUrlInvalid") };
 
     // 顺序很重要：chrome.permissions.request() 必须在用户手势的同步调用栈里发出。
     // 先 await 一个 contains() 就把手势消耗掉了，request() 随后会抛
@@ -400,13 +428,13 @@
       const granted = await withTimeout(
         chrome.permissions.request({ origins: [pattern] }),
         PERMISSION_TIMEOUT_MS,
-        "权限申请超时（可能是权限弹窗被关闭或环境不支持弹窗）"
+        I18N.t("permissionTimeout")
       );
-      return granted ? { ok: true } : { ok: false, error: "未授予该域名访问权限，翻译请求会被浏览器拦截" };
+      return granted ? { ok: true } : { ok: false, error: I18N.t("permissionDenied") };
     } catch (error) {
       // 极少数环境（如无头浏览器）根本不弹权限框，request() 的 Promise
       // 会一直悬挂；没有兜底时界面上会永远停在「测试中…」。
-      return { ok: false, error: `权限申请失败：${error.message || error}` };
+      return { ok: false, error: I18N.t("permissionFailed", (error && error.message) || error) };
     }
   }
 
@@ -465,26 +493,30 @@
    * @return {Promise<void>}
    */
   async function checkEngine(els) {
-    els.engineStatus.textContent = "检测引擎状态…";
+    els.engineStatus.textContent = I18N.t("engineStatusChecking");
     els.engineStatus.className = "state";
     try {
       const response = await chrome.runtime.sendMessage({ action: "getEngineStatus" });
       const engines = (response && response.engines) || {};
       const info = engines[els.engine.value];
-      const label = ENGINE_LABELS[els.engine.value] || els.engine.value;
+      const label = engineLabel(els.engine.value);
 
       if (info && info.available && !info.reason) {
-        els.engineStatus.textContent = `✓ ${label} 可用`;
+        els.engineStatus.textContent = I18N.t("engineStatusAvailable", label);
         els.engineStatus.className = "state ok";
       } else if (info && info.available && info.reason) {
-        els.engineStatus.textContent = `${label}：${info.reason}`;
+        els.engineStatus.textContent = I18N.t("engineStatusReason", label, info.reason);
         els.engineStatus.className = "state warn";
       } else {
-        els.engineStatus.textContent = `${label}：${(info && info.reason) || "当前不可用"}`;
+        els.engineStatus.textContent = I18N.t(
+          "engineStatusReason",
+          label,
+          (info && info.reason) || I18N.t("engineNotAvailable")
+        );
         els.engineStatus.className = "state warn";
       }
     } catch (error) {
-      els.engineStatus.textContent = "引擎状态检测失败：" + (error.message || error);
+      els.engineStatus.textContent = I18N.t("engineStatusCheckFailed", (error && error.message) || error);
       els.engineStatus.className = "state warn";
     }
   }

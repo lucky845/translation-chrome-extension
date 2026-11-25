@@ -7,37 +7,44 @@
 (function () {
   "use strict";
 
+  // 只存语言码，显示名由 I18N.langName 按界面语言生成。
   const LANGS = [
-    ["zh-CN", "中文（简体）"],
-    ["zh-TW", "中文（繁体）"],
-    ["en", "英语"],
-    ["ja", "日语"],
-    ["ko", "韩语"],
-    ["fr", "法语"],
-    ["de", "德语"],
-    ["es", "西班牙语"],
-    ["ru", "俄语"],
-    ["pt", "葡萄牙语"],
-    ["it", "意大利语"],
-    ["ar", "阿拉伯语"],
-    ["hi", "印地语"],
-    ["th", "泰语"],
-    ["vi", "越南语"],
-    ["id", "印尼语"],
-    ["ms", "马来语"],
-    ["pl", "波兰语"],
-    ["tr", "土耳其语"],
-    ["nl", "荷兰语"],
-    ["sv", "瑞典语"],
-    ["da", "丹麦语"],
-    ["fi", "芬兰语"],
-    ["no", "挪威语"],
-    ["hu", "匈牙利语"],
-    ["cs", "捷克语"],
-    ["ro", "罗马尼亚语"],
-    ["uk", "乌克兰语"],
-    ["el", "希腊语"],
+    "zh-CN",
+    "zh-TW",
+    "en",
+    "ja",
+    "ko",
+    "fr",
+    "de",
+    "es",
+    "ru",
+    "pt",
+    "it",
+    "ar",
+    "hi",
+    "th",
+    "vi",
+    "id",
+    "ms",
+    "pl",
+    "tr",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "no",
+    "hu",
+    "cs",
+    "ro",
+    "uk",
+    "el",
   ];
+
+  const I18N = window.__TP_I18N__ || {
+    t: key => key,
+    raw: () => "",
+    langName: code => code,
+  };
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -84,14 +91,14 @@
         const tab = await activeTab();
         const status = tab && tab.id ? await sendToTab(tab.id, { action: "getStatus" }) : null;
         if (status && status.offline) {
-          els.engineInfo.textContent = "已启用浏览器端侧翻译 · 本地推理，不联网不限流";
+          els.engineInfo.textContent = I18N.t("engineInfoOffline");
           els.engineInfo.className = "engine-info ok";
         } else {
           await checkEngine(els);
         }
       } catch {
         if (els.engineInfo) {
-          els.engineInfo.textContent = "引擎可用（探测跳过）";
+          els.engineInfo.textContent = I18N.t("engineInfoProbeSkipped");
           els.engineInfo.className = "engine-info warn";
         }
       }
@@ -99,7 +106,7 @@
       // 最终兜底：避免弹窗空白
       const status = document.getElementById("status");
       if (status) {
-        status.textContent = "初始化失败：" + (e && e.message ? e.message : String(e));
+        status.textContent = I18N.t("popupInitFailed", (e && e.message) || String(e));
         status.className = "status warn";
       }
     }
@@ -112,9 +119,11 @@
    * @param {boolean} withAuto 是否加入"自动检测"
    */
   function fillSelect(select, langs, withAuto) {
-    const options = withAuto ? [["auto", "自动检测"]].concat(langs) : langs;
+    if (!select) return;
+    const entries = langs.map(code => [code, I18N.langName(code)]);
+    if (withAuto) entries.unshift(["auto", I18N.t("sourceAutoDetect")]);
     select.replaceChildren(
-      ...options.map(([value, label]) => {
+      ...entries.map(([value, label]) => {
         const option = document.createElement("option");
         option.value = value;
         option.textContent = label;
@@ -165,14 +174,14 @@
   async function refreshPageState(els) {
     const tab = await activeTab();
     if (!tab || !tab.id) {
-      setStatus(els, "当前页面不支持翻译", "warn");
+      setStatus(els, I18N.t("pageUnsupported"), "warn");
       setButtons(els, false);
       return;
     }
 
     const status = await sendToTab(tab.id, { action: "getStatus" });
     if (!status) {
-      setStatus(els, "当前页面不支持翻译（请在普通网页上使用）", "warn");
+      setStatus(els, I18N.t("pageUnsupportedDetailed"), "warn");
       setButtons(els, false);
       return;
     }
@@ -192,18 +201,18 @@
   async function runAction(els, action) {
     const tab = await activeTab();
     if (!tab || !tab.id) {
-      setStatus(els, "当前页面不支持翻译", "warn");
+      setStatus(els, I18N.t("pageUnsupported"), "warn");
       return;
     }
 
     setBusy(els, true);
-    setStatus(els, action === "translatePage" ? "正在翻译…" : "正在恢复…", "info");
+    setStatus(els, action === "translatePage" ? I18N.t("statusTranslating") : I18N.t("statusRestoring"), "info");
 
     const result = await sendToTab(tab.id, { action: action });
     setBusy(els, false);
 
     if (!result) {
-      setStatus(els, "当前页面不支持翻译（请在普通网页上使用）", "warn");
+      setStatus(els, I18N.t("pageUnsupportedDetailed"), "warn");
       return;
     }
 
@@ -212,17 +221,17 @@
         // 有段落没翻成就必须说出来。旧实现一律显示「已翻译 N 处」，
         // 用户看着半页英文却以为翻完了，只能反复点按钮（真机实测 240 段里 85 段失败）。
         if (result.failed > 0) {
-          setStatus(els, result.error || `有 ${result.failed} 段未翻译，可再点一次重试`, "warn");
+          setStatus(els, result.error || I18N.t("statusPartialFailed", result.failed), "warn");
         } else {
-          setStatus(els, `已翻译 ${result.count} 处文本`, "ok");
+          setStatus(els, I18N.t("statusTranslated", result.count), "ok");
         }
         setButtons(els, true);
       } else {
-        setStatus(els, result.error || "翻译失败", "warn");
+        setStatus(els, result.error || I18N.t("statusTranslateFailed"), "warn");
         setButtons(els, false);
       }
     } else {
-      setStatus(els, `已恢复 ${result.count || 0} 处原文`, "ok");
+      setStatus(els, I18N.t("statusRestored", result.count || 0), "ok");
       setButtons(els, false);
     }
   }
@@ -241,7 +250,7 @@
       if (tab && tab.id) {
         const status = await sendToTab(tab.id, { action: "getStatus" });
         if (status && status.offline) {
-          els.engineInfo.textContent = "本页使用浏览器端侧翻译 · 本地推理，不联网不限流";
+          els.engineInfo.textContent = I18N.t("engineInfoPageOffline");
           els.engineInfo.className = "engine-info ok";
           return;
         }
@@ -254,13 +263,13 @@
         mymemory: "MyMemory",
         lingva: "Lingva",
         bing: "Azure Translator",
-        custom: "自定义接口",
+        custom: I18N.t("engineNameCustom"),
       };
-      const label = labels[stored.engine] || "在线引擎";
-      els.engineInfo.textContent = `本页使用在线引擎：${label}（可在设置中更改）`;
+      const label = labels[stored.engine] || I18N.t("engineNameOnline");
+      els.engineInfo.textContent = I18N.t("engineInfoOnline", label);
       els.engineInfo.className = "engine-info warn";
     } catch {
-      els.engineInfo.textContent = "翻译方式检测失败，可直接尝试翻译";
+      els.engineInfo.textContent = I18N.t("engineInfoUnknown");
       els.engineInfo.className = "engine-info warn";
     }
   }

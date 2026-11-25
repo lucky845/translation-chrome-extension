@@ -87,14 +87,44 @@ test("HTML 中 data-i18n 的 key 均已定义", () => {
   }
 });
 
-test("JS 中 chrome.i18n.getMessage 的 key 均已定义", () => {
-  const files = ["popup/popup.js", "options/options.js", "background/service-worker.js", "content/content.js"];
+test("JS 中引用的 i18n key 均已定义", () => {
+  // 两种写法都要查：直接 chrome.i18n.getMessage("k")，和经 shared/i18n.js 的 I18N.t("k")。
+  // 只查前一种会漏掉全部运行时文案——那是本扩展用户看到的主要部分。
+  const files = [
+    "popup/popup.js",
+    "options/options.js",
+    "background/service-worker.js",
+    "background/translator.js",
+    "content/content.js",
+    "content/offline-translator.js",
+  ];
+  const patterns = [/i18n\.getMessage\(\s*"([\w]+)"/g, /I18N\.(?:t|raw)\(\s*"([\w]+)"/g];
   for (const file of files) {
     const raw = readFileSync(join(root, file), "utf8");
-    const keys = [...raw.matchAll(/i18n\.getMessage\("([\w]+)"\)/g)].map(m => m[1]);
-    for (const key of keys) {
-      assert.ok(zhMessages[key], `${file} 引用了未定义的 key: ${key}`);
+    for (const pattern of patterns) {
+      for (const match of raw.matchAll(pattern)) {
+        assert.ok(zhMessages[match[1]], `${file} 引用了未定义的 key: ${match[1]}`);
+      }
     }
+  }
+});
+
+test("HTML 里出现的中文都挂在 data-i18n 上", () => {
+  // 词条进来得比脚本早，元素里留中文当作加载前的兜底是可以的；
+  // 但如果这个元素没有 data-i18n，切到英文界面后它永远是中文。
+  const pages = ["popup/popup.html", "options/options.html"];
+  for (const page of pages) {
+    const raw = readFileSync(join(root, page), "utf8");
+    const withoutComments = raw.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const body = withoutComments.slice(withoutComments.indexOf("<body"));
+    const offending = [];
+    // 匹配「<tag ...>纯文本</tag>」，看该标签是否带 data-i18n / data-i18n-placeholder
+    for (const match of body.matchAll(/<([a-z][\w-]*)([^>]*)>([^<]*[\u4e00-\u9fff][^<]*)</g)) {
+      const [, tag, attrs] = match;
+      if (/data-i18n(?:-placeholder)?="/.test(attrs)) continue;
+      offending.push(`<${tag}> ${match[3].trim()}`);
+    }
+    assert.deepEqual(offending, [], `${page} 的中文没有挂 data-i18n: ${offending.join(" | ")}`);
   }
 });
 

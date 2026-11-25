@@ -7,6 +7,7 @@
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { createI18n } from "./i18n-mock.mjs";
 
 const PRESETS = [
   {
@@ -59,6 +60,7 @@ async function test(name, fn) {
 async function loadOptions(stored) {
   const html = readFileSync(new URL("../options/options.html", import.meta.url), "utf8");
   const script = readFileSync(new URL("../options/options.js", import.meta.url), "utf8");
+  const i18nScript = readFileSync(new URL("../shared/i18n.js", import.meta.url), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "chrome-extension://test/options/options.html" });
   const { window } = dom;
   const errors = [];
@@ -79,7 +81,7 @@ async function loadOptions(stored) {
       },
       onChanged: { addListener() {} },
     },
-    i18n: { getMessage: key => key },
+    i18n: createI18n("zh_CN"),
     runtime: {
       sendMessage: message => {
         sent.push(message.action);
@@ -93,6 +95,8 @@ async function loadOptions(stored) {
     },
   };
 
+  window.eval(i18nScript);
+  assert.ok(window.__TP_I18N__, "shared/i18n.js 应挂载 __TP_I18N__");
   window.eval(script);
   window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
   // 等 init() 里的 await 链跑完

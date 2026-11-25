@@ -8,6 +8,7 @@
  *   - 接线 chrome.commands 与 contextMenus。
  */
 
+import "../shared/i18n.js";
 import { getSettings } from "./settings.js";
 import { translateTexts, clearCache, resetEngineHealth } from "./translator.js";
 import { CUSTOM_PRESETS, CUSTOM_PRESET_NAMES } from "./engines/custom.js";
@@ -15,12 +16,15 @@ import { CUSTOM_PRESETS, CUSTOM_PRESET_NAMES } from "./engines/custom.js";
 /** 单个引擎探测的硬超时：探测只是界面提示，绝不能拖住翻译 */
 const PROBE_TIMEOUT_MS = 6000;
 
+/** i18n 助手（shared/i18n.js 挂在全局，service worker 是 module，只能这么取）。 */
+const I18N = globalThis.__TP_I18N__ || { t: key => key, raw: () => "", langName: code => code };
+
 // ---- 消息路由 ----
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handler = handlers[message && message.action];
   if (!handler) {
-    sendResponse({ ok: false, error: `未知动作：${message && message.action}` });
+    sendResponse({ ok: false, error: I18N.t("unknownAction", (message && message.action) || "") });
     return false;
   }
 
@@ -107,6 +111,7 @@ const handlers = {
       return {
         name,
         label: preset.label,
+        labelKey: preset.labelKey || "",
         url: preset.url || "",
         method: preset.method || "POST",
         headers: preset.headers || "",
@@ -132,16 +137,16 @@ const handlers = {
         return {
           ok: true,
           engines: {
-            google: { available: true, reason: "探测失败（可直接尝试翻译）" },
+            google: { available: true, reason: I18N.t("probeFailed") },
             bing: {
               available: Boolean(settings.apiKey),
-              reason: settings.apiKey ? null : "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）",
+              reason: settings.apiKey ? null : I18N.t("azureKeyRequiredExpired"),
             },
-            mymemory: { available: true, reason: "探测失败（可直接尝试翻译）" },
-            lingva: { available: true, reason: "探测失败（可直接尝试翻译）" },
+            mymemory: { available: true, reason: I18N.t("probeFailed") },
+            lingva: { available: true, reason: I18N.t("probeFailed") },
             custom: {
               available: Boolean(String(settings.customUrl || "").trim()),
-              reason: String(settings.customUrl || "").trim() ? null : "未配置接口地址（设置 → 引擎 → 自定义接口）",
+              reason: String(settings.customUrl || "").trim() ? null : I18N.t("customUrlMissing"),
             },
           },
         };
@@ -164,13 +169,13 @@ function staticEngineAvailability(settings) {
     google: { available: true, reason: null },
     bing: {
       available: Boolean(settings.apiKey),
-      reason: settings.apiKey ? null : "需要 Azure 翻译密钥",
+      reason: settings.apiKey ? null : I18N.t("azureKeyRequired"),
     },
     mymemory: { available: true, reason: null },
     lingva: { available: true, reason: null },
     custom: {
       available: hasCustom,
-      reason: hasCustom ? null : "未配置接口地址（设置 → 引擎 → 自定义接口）",
+      reason: hasCustom ? null : I18N.t("customUrlMissing"),
     },
   };
 }
@@ -193,7 +198,9 @@ async function engineAvailability(settings) {
     try {
       const result = await Promise.race([
         translateTexts(["hi"], "en", settings.targetLanguage, name),
-        new Promise(resolve => setTimeout(() => resolve({ ok: false, error: "探测超时" }), PROBE_TIMEOUT_MS)),
+        new Promise(resolve =>
+          setTimeout(() => resolve({ ok: false, error: I18N.t("probeTimeout") }), PROBE_TIMEOUT_MS)
+        ),
       ]);
       apply(result);
     } catch (error) {
@@ -203,13 +210,14 @@ async function engineAvailability(settings) {
 
   await Promise.all([
     probe("google", result => {
-      if (!result.ok) status.google.reason = result.error || "Google 探测失败（可直接尝试翻译）";
+      if (!result.ok) status.google.reason = result.error || I18N.t("probeFailedNamed", I18N.raw("engineOptionGoogle"));
     }),
     probe("mymemory", result => {
-      if (!result.ok) status.mymemory.reason = result.error || "MyMemory 探测失败（可直接尝试翻译）";
+      if (!result.ok)
+        status.mymemory.reason = result.error || I18N.t("probeFailedNamed", I18N.raw("engineOptionMyMemory"));
     }),
     probe("lingva", result => {
-      if (!result.ok) status.lingva.reason = result.error || "Lingva 探测失败（可直接尝试翻译）";
+      if (!result.ok) status.lingva.reason = result.error || I18N.t("probeFailedNamed", I18N.raw("engineOptionLingva"));
     }),
   ]);
 
@@ -277,12 +285,12 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "translatePage",
-      title: chrome.i18n.getMessage("translatePageTitle") || "翻译此页面",
+      title: I18N.t("translatePageTitle"),
       contexts: ["page"],
     });
     chrome.contextMenus.create({
       id: "translateSelected",
-      title: chrome.i18n.getMessage("translateSelectedTextTitle") || "翻译选中文本",
+      title: I18N.t("translateSelectedTextTitle"),
       contexts: ["selection"],
     });
   });

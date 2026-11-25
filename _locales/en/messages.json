@@ -208,5 +208,430 @@
   },
   "lazyTranslateDesc": {
     "message": "Translate what you scroll to, so the first screen is ready instantly. Turn off to translate the whole page at once."
+  },
+  "sourceAutoDetect": {
+    "message": "Auto-detect"
+  },
+  "engineInfoOffline": {
+    "message": "Built-in on-device translation enabled · local inference, no network, no rate limits"
+  },
+  "engineInfoProbeSkipped": {
+    "message": "Engine available (probe skipped)"
+  },
+  "popupInitFailed": {
+    "message": "Initialization failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "pageUnsupported": {
+    "message": "This page can't be translated"
+  },
+  "pageUnsupportedDetailed": {
+    "message": "This page can't be translated (open a regular web page)"
+  },
+  "statusTranslating": {
+    "message": "Translating…"
+  },
+  "statusRestoring": {
+    "message": "Restoring…"
+  },
+  "statusPartialFailed": {
+    "message": "$FAILED$ blocks weren't translated; click again to retry",
+    "placeholders": {
+      "failed": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusTranslated": {
+    "message": "Translated $COUNT$ items",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusTranslateFailed": {
+    "message": "Translation failed"
+  },
+  "statusRestored": {
+    "message": "Restored $COUNT$ items",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineInfoPageOffline": {
+    "message": "This page uses built-in on-device translation · local inference, no network, no rate limits"
+  },
+  "engineNameCustom": {
+    "message": "Custom endpoint"
+  },
+  "engineNameOnline": {
+    "message": "Online engine"
+  },
+  "engineInfoOnline": {
+    "message": "This page uses the online engine: $NAME$ (change it in settings)",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineInfoUnknown": {
+    "message": "Couldn't detect the translation mode; try translating anyway"
+  },
+  "offlineStatusChecking": {
+    "message": "Checking…"
+  },
+  "offlineStatusAvailable": {
+    "message": "✓ Available (built-in model, local inference)"
+  },
+  "offlineStatusUnavailable": {
+    "message": "On-device translation isn't available in this browser or page; the online engine below will be used (Chrome 138+ / Edge 148+)"
+  },
+  "offlineStatusUnknown": {
+    "message": "Can't check (open any web page first)"
+  },
+  "customTestRunning": {
+    "message": "Testing…"
+  },
+  "customUrlRequired": {
+    "message": "Enter the endpoint URL first"
+  },
+  "customTestSucceeded": {
+    "message": "Connected: \"Hello, world!\" → \"$RESULT$\"",
+    "placeholders": {
+      "result": {
+        "content": "$1"
+      }
+    }
+  },
+  "customTestFailed": {
+    "message": "Failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknownError": {
+    "message": "Unknown error"
+  },
+  "customUrlInvalid": {
+    "message": "The endpoint URL isn't a valid http(s) URL"
+  },
+  "permissionTimeout": {
+    "message": "Permission request timed out (the prompt was closed or isn't supported here)"
+  },
+  "permissionDenied": {
+    "message": "Domain access wasn't granted, so the browser will block translation requests"
+  },
+  "permissionFailed": {
+    "message": "Permission request failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineStatusChecking": {
+    "message": "Checking engine status…"
+  },
+  "engineStatusAvailable": {
+    "message": "✓ $NAME$ is available",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineStatusReason": {
+    "message": "$NAME$: $REASON$",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      },
+      "reason": {
+        "content": "$2"
+      }
+    }
+  },
+  "engineNotAvailable": {
+    "message": "currently unavailable"
+  },
+  "engineStatusCheckFailed": {
+    "message": "Engine check failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineOptionGoogle": {
+    "message": "Google (free)"
+  },
+  "engineOptionMyMemory": {
+    "message": "MyMemory (no key, daily quota)"
+  },
+  "engineOptionCustom": {
+    "message": "Custom endpoint (self-hosted / proxy)"
+  },
+  "engineOptionLingva": {
+    "message": "Lingva (Google mirror, availability varies by region)"
+  },
+  "engineOptionBing": {
+    "message": "Azure Translator (requires key)"
+  },
+  "unknownAction": {
+    "message": "Unknown action: $ACTION$",
+    "placeholders": {
+      "action": {
+        "content": "$1"
+      }
+    }
+  },
+  "probeFailed": {
+    "message": "Probe failed (you can still try translating)"
+  },
+  "azureKeyRequiredExpired": {
+    "message": "An Azure Translator key is required (the free endpoint was retired in Nov 2026)"
+  },
+  "azureKeyRequired": {
+    "message": "An Azure Translator key is required"
+  },
+  "customUrlMissing": {
+    "message": "No endpoint URL configured (Settings → Engine → Custom endpoint)"
+  },
+  "probeTimeout": {
+    "message": "Probe timed out"
+  },
+  "probeFailedNamed": {
+    "message": "The $NAME$ probe failed (you can still try translating)",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "batchPartialResult": {
+    "message": "Only $FILLED$/$TOTAL$ blocks came back translated",
+    "placeholders": {
+      "filled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "engineNotConfigured": {
+    "message": "$NAME$: not configured",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineDegraded": {
+    "message": "Fell back from $FROM$ to $TO$",
+    "placeholders": {
+      "from": {
+        "content": "$1"
+      },
+      "to": {
+        "content": "$2"
+      }
+    }
+  },
+  "allEnginesFailed": {
+    "message": "All engines failed → $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusBusyTranslating": {
+    "message": "Translation already in progress"
+  },
+  "statusCancelled": {
+    "message": "Translation cancelled"
+  },
+  "blockedByBlacklist": {
+    "message": "This site is on the never-translate list (Settings → Preferences)"
+  },
+  "pageAlreadyChinese": {
+    "message": "The page is already in Chinese; nothing to do"
+  },
+  "indicatorTranslating": {
+    "message": "Translating…"
+  },
+  "pageNoText": {
+    "message": "No translatable text on this page"
+  },
+  "pageAlreadyTarget": {
+    "message": "The page is already in the target language; nothing to do"
+  },
+  "indicatorPreparingOffline": {
+    "message": "Translating… (preparing the on-device model; using the online engine for now)"
+  },
+  "translatePartlyDone": {
+    "message": "$FAILED$ of $TOTAL$ blocks weren't translated, usually due to rate limits or network hiccups; click Retranslate to fill them in",
+    "placeholders": {
+      "failed": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorPartialFailed": {
+    "message": "Translated $APPLIED$/$TOTAL$ blocks · $FAILED$ failed",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "failed": {
+        "content": "$3"
+      }
+    }
+  },
+  "translateEchoed": {
+    "message": "$COUNT$ blocks were left as-is because the engine considered them already target-language, usually mixed Chinese/English text",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "indicatorEchoed": {
+    "message": "Translated $APPLIED$ blocks · $COUNT$ kept as-is",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "count": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorDone": {
+    "message": "Translated $APPLIED$ blocks · $RATE$ blocks/s",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "rate": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorOfflineProgress": {
+    "message": "On-device translation… $APPLIED$/$TOTAL$",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "translateRequestFailed": {
+    "message": "Translation request failed"
+  },
+  "translateSuspended": {
+    "message": "Stopped after $COUNT$ batches in a row returned no usable response ($DETAIL$)",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorProgress": {
+    "message": "Translating… $APPLIED$/$TOTAL$",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorRetrying": {
+    "message": "Retrying untranslated blocks…"
+  },
+  "selectionResultTitle": {
+    "message": "Translation"
+  },
+  "selectionClose": {
+    "message": "Close"
+  },
+  "backgroundTimeout": {
+    "message": "The background page didn't respond in time"
+  },
+  "messageSendFailed": {
+    "message": "Failed to send the message"
+  },
+  "translateFailedDetail": {
+    "message": "Translation failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "offlineUnsupported": {
+    "message": "This browser doesn't support on-device translation"
+  },
+  "offlineUnsupportedLong": {
+    "message": "This browser doesn't support on-device translation (Chrome 138+ / Edge 148+)"
+  },
+  "offlineTranslateFailed": {
+    "message": "On-device translation failed: $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "langZhHans": {
+    "message": "Chinese (Simplified)"
+  },
+  "langZhHant": {
+    "message": "Chinese (Traditional)"
+  },
+  "engineInfoChecking": {
+    "message": "Detecting translation method…",
+    "description": "Popup: 探测翻译方式时的初始占位文案"
+  },
+  "presetDeeplx": {
+    "message": "DeepLX (self-hosted / public instance)",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetLibretranslate": {
+    "message": "LibreTranslate (self-hosted)",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetOpenai": {
+    "message": "OpenAI-compatible endpoint (any proxy)",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetGeneric": {
+    "message": "Generic (fully custom)",
+    "description": "设置页：自定义接口预设的显示名"
   }
 }

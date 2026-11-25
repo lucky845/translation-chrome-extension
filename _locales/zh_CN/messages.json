@@ -208,5 +208,430 @@
   },
   "lazyTranslateDesc": {
     "message": "滚到哪翻到哪，首屏秒出译文；关闭则一次翻完整页。"
+  },
+  "sourceAutoDetect": {
+    "message": "自动检测"
+  },
+  "engineInfoOffline": {
+    "message": "已启用浏览器端侧翻译 · 本地推理，不联网不限流"
+  },
+  "engineInfoProbeSkipped": {
+    "message": "引擎可用（探测跳过）"
+  },
+  "popupInitFailed": {
+    "message": "初始化失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "pageUnsupported": {
+    "message": "当前页面不支持翻译"
+  },
+  "pageUnsupportedDetailed": {
+    "message": "当前页面不支持翻译（请在普通网页上使用）"
+  },
+  "statusTranslating": {
+    "message": "正在翻译…"
+  },
+  "statusRestoring": {
+    "message": "正在恢复…"
+  },
+  "statusPartialFailed": {
+    "message": "有 $FAILED$ 段未翻译，可再点一次重试",
+    "placeholders": {
+      "failed": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusTranslated": {
+    "message": "已翻译 $COUNT$ 处文本",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusTranslateFailed": {
+    "message": "翻译失败"
+  },
+  "statusRestored": {
+    "message": "已恢复 $COUNT$ 处原文",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineInfoPageOffline": {
+    "message": "本页使用浏览器端侧翻译 · 本地推理，不联网不限流"
+  },
+  "engineNameCustom": {
+    "message": "自定义接口"
+  },
+  "engineNameOnline": {
+    "message": "在线引擎"
+  },
+  "engineInfoOnline": {
+    "message": "本页使用在线引擎：$NAME$（可在设置中更改）",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineInfoUnknown": {
+    "message": "翻译方式检测失败，可直接尝试翻译"
+  },
+  "offlineStatusChecking": {
+    "message": "检测中…"
+  },
+  "offlineStatusAvailable": {
+    "message": "✓ 可用（浏览器内置模型，本地推理）"
+  },
+  "offlineStatusUnavailable": {
+    "message": "当前浏览器或页面不支持端侧翻译，将使用下面的在线引擎（Chrome 138+ / Edge 148+）"
+  },
+  "offlineStatusUnknown": {
+    "message": "无法检测（打开任意网页后再查看）"
+  },
+  "customTestRunning": {
+    "message": "测试中…"
+  },
+  "customUrlRequired": {
+    "message": "请先填写接口地址"
+  },
+  "customTestSucceeded": {
+    "message": "连接成功：「Hello, world!」→「$RESULT$」",
+    "placeholders": {
+      "result": {
+        "content": "$1"
+      }
+    }
+  },
+  "customTestFailed": {
+    "message": "失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "unknownError": {
+    "message": "未知错误"
+  },
+  "customUrlInvalid": {
+    "message": "接口地址不是合法的 http(s) URL"
+  },
+  "permissionTimeout": {
+    "message": "权限申请超时（可能是权限弹窗被关闭或环境不支持弹窗）"
+  },
+  "permissionDenied": {
+    "message": "未授予该域名访问权限，翻译请求会被浏览器拦截"
+  },
+  "permissionFailed": {
+    "message": "权限申请失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineStatusChecking": {
+    "message": "检测引擎状态…"
+  },
+  "engineStatusAvailable": {
+    "message": "✓ $NAME$ 可用",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineStatusReason": {
+    "message": "$NAME$：$REASON$",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      },
+      "reason": {
+        "content": "$2"
+      }
+    }
+  },
+  "engineNotAvailable": {
+    "message": "当前不可用"
+  },
+  "engineStatusCheckFailed": {
+    "message": "引擎状态检测失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineOptionGoogle": {
+    "message": "Google（免费）"
+  },
+  "engineOptionMyMemory": {
+    "message": "MyMemory（免密钥，有日配额）"
+  },
+  "engineOptionCustom": {
+    "message": "自定义接口（自建 / 中转）"
+  },
+  "engineOptionLingva": {
+    "message": "Lingva（Google 镜像，可用性因地区而异）"
+  },
+  "engineOptionBing": {
+    "message": "Azure Translator（需密钥）"
+  },
+  "unknownAction": {
+    "message": "未知动作：$ACTION$",
+    "placeholders": {
+      "action": {
+        "content": "$1"
+      }
+    }
+  },
+  "probeFailed": {
+    "message": "探测失败（可直接尝试翻译）"
+  },
+  "azureKeyRequiredExpired": {
+    "message": "需要 Azure 翻译密钥（免费端点已于 2026-11 失效）"
+  },
+  "azureKeyRequired": {
+    "message": "需要 Azure 翻译密钥"
+  },
+  "customUrlMissing": {
+    "message": "未配置接口地址（设置 → 引擎 → 自定义接口）"
+  },
+  "probeTimeout": {
+    "message": "探测超时"
+  },
+  "probeFailedNamed": {
+    "message": "$NAME$ 探测失败（可直接尝试翻译）",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "batchPartialResult": {
+    "message": "仅 $FILLED$/$TOTAL$ 段获得译文",
+    "placeholders": {
+      "filled": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "engineNotConfigured": {
+    "message": "$NAME$: 未配置",
+    "placeholders": {
+      "name": {
+        "content": "$1"
+      }
+    }
+  },
+  "engineDegraded": {
+    "message": "已从 $FROM$ 降级到 $TO$",
+    "placeholders": {
+      "from": {
+        "content": "$1"
+      },
+      "to": {
+        "content": "$2"
+      }
+    }
+  },
+  "allEnginesFailed": {
+    "message": "所有引擎失败 → $DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusBusyTranslating": {
+    "message": "正在翻译中"
+  },
+  "statusCancelled": {
+    "message": "翻译已取消"
+  },
+  "blockedByBlacklist": {
+    "message": "当前站点在不翻译名单里（设置 → 翻译偏好）"
+  },
+  "pageAlreadyChinese": {
+    "message": "页面已经是中文，无需翻译"
+  },
+  "indicatorTranslating": {
+    "message": "翻译中…"
+  },
+  "pageNoText": {
+    "message": "页面没有可翻译的文本"
+  },
+  "pageAlreadyTarget": {
+    "message": "页面内容已经是目标语言，无需翻译"
+  },
+  "indicatorPreparingOffline": {
+    "message": "翻译中…（端侧模型准备中，先用在线引擎）"
+  },
+  "translatePartlyDone": {
+    "message": "有 $FAILED$ 段未翻译（共 $TOTAL$ 段），多为引擎限流或网络波动，可点「重新翻译」补齐",
+    "placeholders": {
+      "failed": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorPartialFailed": {
+    "message": "已翻译 $APPLIED$/$TOTAL$ 段 · 剩余 $FAILED$ 段失败",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "failed": {
+        "content": "$3"
+      }
+    }
+  },
+  "translateEchoed": {
+    "message": "有 $COUNT$ 段被引擎判定为「已是目标语言」而保持原文，多为中英混排的段落",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "indicatorEchoed": {
+    "message": "已翻译 $APPLIED$ 段 · $COUNT$ 段保持原文",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "count": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorDone": {
+    "message": "已翻译 $APPLIED$ 段 · $RATE$ 段/秒",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "rate": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorOfflineProgress": {
+    "message": "端侧翻译中… $APPLIED$/$TOTAL$",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "translateRequestFailed": {
+    "message": "翻译请求失败"
+  },
+  "translateSuspended": {
+    "message": "连续 $COUNT$ 个批次未拿到有效响应，已暂停翻译（$DETAIL$）",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorProgress": {
+    "message": "翻译中… $APPLIED$/$TOTAL$",
+    "placeholders": {
+      "applied": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "indicatorRetrying": {
+    "message": "重试未完成的段落…"
+  },
+  "selectionResultTitle": {
+    "message": "译文"
+  },
+  "selectionClose": {
+    "message": "关闭"
+  },
+  "backgroundTimeout": {
+    "message": "后台响应超时"
+  },
+  "messageSendFailed": {
+    "message": "消息发送失败"
+  },
+  "translateFailedDetail": {
+    "message": "翻译失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "offlineUnsupported": {
+    "message": "当前浏览器不支持端侧翻译"
+  },
+  "offlineUnsupportedLong": {
+    "message": "当前浏览器不支持端侧翻译（Chrome 138+ / Edge 148+）"
+  },
+  "offlineTranslateFailed": {
+    "message": "端侧翻译失败：$DETAIL$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "langZhHans": {
+    "message": "中文（简体）"
+  },
+  "langZhHant": {
+    "message": "中文（繁体）"
+  },
+  "engineInfoChecking": {
+    "message": "正在检测翻译方式…",
+    "description": "Popup: 探测翻译方式时的初始占位文案"
+  },
+  "presetDeeplx": {
+    "message": "DeepLX（自建 / 公共实例）",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetLibretranslate": {
+    "message": "LibreTranslate（自建）",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetOpenai": {
+    "message": "OpenAI 兼容接口（任意中转）",
+    "description": "设置页：自定义接口预设的显示名"
+  },
+  "presetGeneric": {
+    "message": "通用（完全自定义）",
+    "description": "设置页：自定义接口预设的显示名"
   }
 }

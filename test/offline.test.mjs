@@ -7,6 +7,7 @@
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { createI18n } from "./i18n-mock.mjs";
 
 const results = [];
 
@@ -38,9 +39,16 @@ function load(translatorStub) {
   const { window } = dom;
   if (translatorStub) window.Translator = translatorStub;
 
+  // 真实中文词条：离线模块的错误文案要断言具体内容，不能拿 key 糊弄。
+  window.chrome = { i18n: createI18n("zh_CN") };
+
   const scope = { globalThis: window, window, document: window.document, Node: window.Node };
-  const source = readFileSync(new URL("../content/offline-translator.js", import.meta.url), "utf8");
-  new Function(...Object.keys(scope), source)(...Object.values(scope));
+  const loadFile = file => {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    new Function(...Object.keys(scope), source)(...Object.values(scope));
+  };
+  loadFile("../shared/i18n.js");
+  loadFile("../content/offline-translator.js");
   return window;
 }
 
