@@ -15,6 +15,15 @@
  */
 
 /**
+ * i18n 助手（shared/i18n.js 先于本文件注入）。Node 单元测试没有它，必须容错。
+ */
+const I18N = (typeof window !== "undefined" && window.__TP_I18N__) || {
+  t: key => key,
+  raw: () => "",
+  langName: code => code,
+};
+
+/**
  * 语言码收敛为端侧可识别的形式。
  * @param {string} lang 语言码
  * @return {string} 端侧语言码
@@ -111,7 +120,7 @@ function getSession(fromLang, toLang) {
  */
 async function warmup(fromLang, toLang) {
   if (!isSupported()) {
-    warmupFailure = "当前浏览器不支持端侧翻译";
+    warmupFailure = I18N.t("offlineUnsupported");
     return false;
   }
   try {
@@ -133,7 +142,7 @@ async function warmup(fromLang, toLang) {
  */
 async function translate(texts, fromLang, toLang) {
   if (!isSupported()) {
-    throw new Error("当前浏览器不支持端侧翻译（Chrome 138+ / Edge 148+）");
+    throw new Error(I18N.t("offlineUnsupportedLong"));
   }
 
   const session = await getSession(fromLang, toLang);
@@ -170,7 +179,7 @@ async function translate(texts, fromLang, toLang) {
       }
       results.push({ text: out, detected });
     } catch (error) {
-      throw new Error("端侧翻译失败：" + String((error && error.message) || error), {
+      throw new Error(I18N.t("offlineTranslateFailed", String((error && error.message) || error)), {
         cause: error,
       });
     }

@@ -381,7 +381,7 @@
         <p class="lede" data-i18n="offlineTranslationDesc">
           由浏览器内置模型在本机完成翻译，文字不离开设备。首次使用需下载该语言对的模型。
         </p>
-        <div class="state" id="offline-status">检测中…</div>
+        <div class="state" id="offline-status" data-i18n="offlineStatusChecking">检测中…</div>
       </section>
 
       <!-- 第二级：端侧不可用时的在线引擎 -->
@@ -397,13 +397,13 @@
         <div class="field">
           <label for="engine" data-i18n="engineFieldLabel">引擎</label>
           <select id="engine">
-            <option value="google">Google（免费）</option>
-            <option value="mymemory">MyMemory（免密钥，有日配额）</option>
-            <option value="custom">自定义接口（自建 / 中转）</option>
-            <option value="lingva">Lingva（Google 镜像，可用性因地区而异）</option>
-            <option value="bing">Azure Translator（需密钥）</option>
+            <option value="google" data-i18n="engineOptionGoogle">Google（免费）</option>
+            <option value="mymemory" data-i18n="engineOptionMyMemory">MyMemory（免密钥，有日配额）</option>
+            <option value="custom" data-i18n="engineOptionCustom">自定义接口（自建 / 中转）</option>
+            <option value="lingva" data-i18n="engineOptionLingva">Lingva（Google 镜像，可用性因地区而异）</option>
+            <option value="bing" data-i18n="engineOptionBing">Azure Translator（需密钥）</option>
           </select>
-          <div class="state" id="engine-status">检测引擎状态…</div>
+          <div class="state" id="engine-status" data-i18n="engineStatusChecking">检测引擎状态…</div>
         </div>
 
         <div id="azure-settings">
@@ -559,6 +559,7 @@
     </div>
   </div>
 
+  <script src="../shared/i18n.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

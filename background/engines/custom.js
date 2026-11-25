@@ -79,6 +79,7 @@ function baseLang(lang) {
 export const CUSTOM_PRESETS = {
   deeplx: {
     label: "DeepLX（自建 / 公共实例）",
+    labelKey: "presetDeeplx",
     hint: 'DeepLX 的 /translate 接口，返回 { data: "译文" }',
     url: "https://api.deeplx.org/translate",
     concurrency: 4,
@@ -94,6 +95,7 @@ export const CUSTOM_PRESETS = {
   },
   libretranslate: {
     label: "LibreTranslate（自建）",
+    labelKey: "presetLibretranslate",
     hint: 'LibreTranslate 的 /translate 接口，返回 { translatedText: "译文" }',
     url: "https://libretranslate.com/translate",
     concurrency: 4,
@@ -109,6 +111,7 @@ export const CUSTOM_PRESETS = {
   },
   openai: {
     label: "OpenAI 兼容接口（任意中转）",
+    labelKey: "presetOpenai",
     hint: "POST /v1/chat/completions，返回 choices[0].message.content",
     url: "https://api.openai.com/v1/chat/completions",
     concurrency: 2,
@@ -126,6 +129,7 @@ export const CUSTOM_PRESETS = {
   },
   generic: {
     label: "通用（完全自定义）",
+    labelKey: "presetGeneric",
     hint: "自己填地址、请求模板与响应路径；响应是纯文本时把响应路径留空",
     url: "",
     // 4 与 DeepLX / LibreTranslate 预设一致：自建服务通常能承受；

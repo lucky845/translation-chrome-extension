@@ -9,6 +9,7 @@
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { createI18n } from "./i18n-mock.mjs";
 
 const results = [];
 
@@ -102,6 +103,8 @@ async function loadContent(html, options = {}) {
         },
       },
     },
+    // 真实词条（读 _locales/zh_CN），不是「返回 key」的空壳。
+    i18n: createI18n("zh_CN"),
   };
 
   // 可选：模拟 chrome.storage（设置变更同步测试用）
@@ -143,6 +146,8 @@ async function loadContent(html, options = {}) {
 
   load("../content/dom-core.js", ["globalThis", "document", "Node"]);
   assert.ok(window.__TP_DOM__, "dom-core.js 应挂载 __TP_DOM__");
+  load("../shared/i18n.js", ["globalThis"]);
+  assert.ok(window.__TP_I18N__, "shared/i18n.js 应挂载 __TP_I18N__");
   load("../content/offline-translator.js", ["globalThis", "window", "document", "Node"]);
   load("../content/content.js", ["window", "document", "chrome", "MutationObserver", "IntersectionObserver"]);
 

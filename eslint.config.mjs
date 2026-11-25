@@ -232,4 +232,18 @@ export default [
       "no-invalid-this": "off",
     },
   },
+
+  {
+    files: ["shared/i18n.js"],
+    languageOptions: {
+      globals: {
+        // 同 dom-core：浏览器里挂全局，Node 里走 module.exports 供测试
+        module: "writable",
+      },
+    },
+    rules: {
+      // 尾部 IIFE 的 this 传参是刻意的（兼容无 globalThis 的环境）
+      "no-invalid-this": "off",
+    },
+  },
 ];

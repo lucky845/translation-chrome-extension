@@ -26,6 +26,9 @@
   // 站点黑名单：命中则整页翻译直接拒绝
   const BLACKLIST = window.__TP_BLACKLIST__ || null;
 
+  // i18n 助手（shared/i18n.js 先于本文件注入）。缺失时退回 key，界面不会空白。
+  const I18N = window.__TP_I18N__ || { t: key => key, raw: () => "", langName: code => code };
+
   // 端侧翻译模块（Chrome 138+ 内置，完全离线）
 
   /** 后台响应超时，防止消息通道永久挂起。 */
@@ -223,18 +226,18 @@
      * @return {Promise<Object>} 结果
      */
     async translatePage() {
-      if (this.state === "translating") return { success: false, count: 0, error: "正在翻译中" };
+      if (this.state === "translating") return { success: false, count: 0, error: I18N.t("statusBusyTranslating") };
 
       const generationBeforeSettings = this.translationGeneration;
-      const interrupted = { success: false, count: 0, error: "翻译已取消" };
+      const interrupted = { success: false, count: 0, error: I18N.t("statusCancelled") };
       const settings = await this.loadSettings();
       if (generationBeforeSettings !== this.translationGeneration) return interrupted;
-      if (this.state === "translating") return { success: false, count: 0, error: "正在翻译中" };
+      if (this.state === "translating") return { success: false, count: 0, error: I18N.t("statusBusyTranslating") };
       const target = settings.targetLanguage;
 
       // 黑名单站点：不翻译。企业后台/银行/登录页的语义不能被机器翻译破坏。
       if (BLACKLIST && BLACKLIST.isBlocked(location.href, settings.blacklist)) {
-        this.lastError = "当前站点在不翻译名单里（设置 → 翻译偏好）";
+        this.lastError = I18N.t("blockedByBlacklist");
         return { success: false, count: 0, error: this.lastError };
       }
 
@@ -246,7 +249,7 @@
         const sample = body ? String(body.innerText || body.textContent || "").slice(0, 2000) : "";
         const alreadyChinese = DOM.isPageAlreadyTarget(target) || DOM.hanRatio(sample) >= 0.5;
         if (alreadyChinese && sample && DOM.containsHanText(sample)) {
-          this.lastError = "页面已经是中文，无需翻译";
+          this.lastError = I18N.t("pageAlreadyChinese");
           return { success: false, count: 0, error: this.lastError };
         }
       }
@@ -259,7 +262,7 @@
       this.lastError = null;
       this.degraded = false;
       this.startedAt = Date.now();
-      this.showIndicator("翻译中…");
+      this.showIndicator(I18N.t("indicatorTranslating"));
 
       try {
         // 自定义引擎（DeepLX/OpenAI 等）是纯文本接口，<0> 会被当 HTML 剥掉；
@@ -271,7 +274,7 @@
         if (this.units.length === 0) {
           this.state = "idle";
           this.hideIndicator();
-          this.lastError = "页面没有可翻译的文本";
+          this.lastError = I18N.t("pageNoText");
           return { success: false, count: 0, error: this.lastError };
         }
 
@@ -283,7 +286,7 @@
         if (this.units.length === 0) {
           this.state = "idle";
           this.hideIndicator();
-          this.lastError = "页面内容已经是目标语言，无需翻译";
+          this.lastError = I18N.t("pageAlreadyTarget");
           return { success: false, count: 0, error: this.lastError };
         }
         if (this.units.length < beforeFilter) {
@@ -305,7 +308,7 @@
             applied = await this.translateOffline(this.units, from, target);
             if (cancelled()) return interrupted;
           } else if (quick.pending) {
-            this.showIndicator("翻译中…（端侧模型准备中，先用在线引擎）");
+            this.showIndicator(I18N.t("indicatorPreparingOffline"));
           }
         }
 
@@ -336,7 +339,7 @@
             success: false,
             count: 0,
             failed: failedCount || this.units.length,
-            error: this.lastError || "翻译失败",
+            error: this.lastError || I18N.t("statusTranslateFailed"),
           };
         }
 
@@ -350,8 +353,8 @@
         // 弹窗据此提示「重新翻译」，用户能自己重试补齐。
         if (failedCount > 0) {
           const total = applied + failedCount;
-          this.lastError = `有 ${failedCount} 段未翻译（共 ${total} 段），多为引擎限流或网络波动，可点「重新翻译」补齐`;
-          this.showIndicator(`已翻译 ${applied}/${total} 段 · 剩余 ${failedCount} 段失败`, true);
+          this.lastError = I18N.t("translatePartlyDone", failedCount, total);
+          this.showIndicator(I18N.t("indicatorPartialFailed", applied, total, failedCount), true);
           setTimeout(() => {
             if (!cancelled()) this.hideIndicator();
           }, 5000);
@@ -365,14 +368,14 @@
         if (this.echoed > 0) {
           const echoCount = this.echoed;
           this.echoed = 0;
-          this.lastError = `有 ${echoCount} 段被引擎判定为「已是目标语言」而保持原文，多为中英混排的段落`;
-          this.showIndicator(`已翻译 ${applied} 段 · ${echoCount} 段保持原文`, true);
+          this.lastError = I18N.t("translateEchoed", echoCount);
+          this.showIndicator(I18N.t("indicatorEchoed", applied, echoCount), true);
           setTimeout(() => this.hideIndicator(), 4000);
           return { success: true, count: applied, elapsed, error: this.lastError };
         }
         this.echoed = 0;
 
-        this.showIndicator(`已翻译 ${applied} 段 · ${(applied / (elapsed / 1000)).toFixed(1)} 段/秒`, true);
+        this.showIndicator(I18N.t("indicatorDone", applied, (applied / (elapsed / 1000)).toFixed(1)), true);
         setTimeout(() => this.hideIndicator(), 2500);
         return { success: true, count: applied, elapsed };
       } catch (error) {
@@ -571,7 +574,7 @@
           const now = Date.now();
           if (now - lastProgressAt >= 100) {
             lastProgressAt = now;
-            this.showIndicator("端侧翻译中… " + applied + "/" + units.length, true);
+            this.showIndicator(I18N.t("indicatorOfflineProgress", applied, units.length), true);
           }
         }
       } finally {
@@ -818,10 +821,10 @@
           }
 
           if (!response || !response.ok) {
-            if (!this.lastError) this.lastError = (response && response.error) || "翻译请求失败";
+            if (!this.lastError) this.lastError = (response && response.error) || I18N.t("translateRequestFailed");
             // 失败批次不能就这么丢掉：用户看到的会是「翻译完成，但一半还是英文」。
             // 收进 failed，循环结束后统一重试一轮。
-            lastFailure = (response && response.error) || "翻译请求失败";
+            lastFailure = (response && response.error) || I18N.t("translateRequestFailed");
             failed.push(...batch);
             // 连续失败就早点收工，免得用户在原地干等。
             // 但提示必须如实：这里只知道「连续几个批次没拿到有效响应」，
@@ -830,7 +833,7 @@
             // 把排查方向整个带偏。现在只说发生了什么，不猜原因。
             consecutiveFails++;
             if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
-              this.lastError = `连续 ${consecutiveFails} 个批次未拿到有效响应，已暂停翻译（${lastFailure}）`;
+              this.lastError = I18N.t("translateSuspended", consecutiveFails, lastFailure);
               failed.push(...pending);
               pending.length = 0;
               deferred.length = 0;
@@ -925,7 +928,7 @@
             }
           }
 
-          this.showIndicator("翻译中… " + applied + "/" + units.length, true);
+          this.showIndicator(I18N.t("indicatorProgress", applied, units.length), true);
         }
 
         // 失败批次重试一轮。
@@ -935,7 +938,7 @@
         if (failed.length > 0 && this.state !== "idle" && !this.restoring) {
           await delay(RETRY_AFTER_FAIL_MS);
           if (cancelled()) return applied;
-          this.showIndicator("重试未完成的段落…", true);
+          this.showIndicator(I18N.t("indicatorRetrying"), true);
           const retryPool = failed.slice();
           failed.length = 0;
           while (retryPool.length > 0 && this.state !== "idle" && !this.restoring) {
@@ -981,7 +984,7 @@
               if (unit.apply(text)) applied++;
               else if (unit.plainText && unit.applyWholeText(text)) applied++;
             });
-            this.showIndicator("翻译中… " + applied + "/" + units.length, true);
+            this.showIndicator(I18N.t("indicatorProgress", applied, units.length), true);
           }
         }
       } finally {
@@ -1326,11 +1329,11 @@
       const head = document.createElement("div");
       head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px";
       const title = document.createElement("strong");
-      title.textContent = "译文";
+      title.textContent = I18N.t("selectionResultTitle");
       title.style.cssText = "font-size:13px;color:#374151";
       const close = document.createElement("button");
       close.textContent = "×";
-      close.setAttribute("aria-label", "关闭");
+      close.setAttribute("aria-label", I18N.t("selectionClose"));
       close.style.cssText = "border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:#9ca3af";
       close.addEventListener("click", () => {
         popup.remove();
@@ -1366,14 +1369,14 @@
   function sendMessage(message) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error("后台响应超时"));
+        reject(new Error(I18N.t("backgroundTimeout")));
       }, MESSAGE_TIMEOUT_MS);
 
       try {
         chrome.runtime.sendMessage(message, response => {
           clearTimeout(timer);
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message || "消息发送失败"));
+            reject(new Error(chrome.runtime.lastError.message || I18N.t("messageSendFailed")));
             return;
           }
           resolve(response || {});
@@ -1398,9 +1401,9 @@
         controller.showSelectionPopup(text, response.translatedText);
         return;
       }
-      controller.showSelectionPopup(text, (response && response.error) || "翻译失败");
+      controller.showSelectionPopup(text, (response && response.error) || I18N.t("statusTranslateFailed"));
     } catch (error) {
-      controller.showSelectionPopup(text, "翻译失败：" + (error.message || error));
+      controller.showSelectionPopup(text, I18N.t("translateFailedDetail", (error && error.message) || error));
     }
   }
 

@@ -7,8 +7,31 @@
  *   3. 缓存跨页面共享，LRU 上限 5000 条防止 service worker 内存无限增长。
  */
 
+import "../shared/i18n.js";
 import { createEngine, FatalTranslationError } from "./engine.js";
 import { getSettings } from "./settings.js";
+
+/** i18n 助手（shared/i18n.js 挂在全局，module 里只能这么取）。 */
+const I18N = globalThis.__TP_I18N__ || { t: key => key, raw: () => "", langName: code => code };
+
+/** 引擎名 → 词条名后缀（对应 _locales 里的 engineOption*）。 */
+const ENGINE_LABEL_KEYS = {
+  google: "engineOptionGoogle",
+  mymemory: "engineOptionMyMemory",
+  lingva: "engineOptionLingva",
+  bing: "engineOptionBing",
+  custom: "engineOptionCustom",
+};
+
+/**
+ * 引擎显示名。
+ * @param {string} name 引擎名
+ * @return {string} 显示名
+ */
+function engineLabel(name) {
+  const key = ENGINE_LABEL_KEYS[name];
+  return key ? I18N.t(key) : name;
+}
 
 const CACHE_LIMIT = 5000;
 
@@ -241,7 +264,7 @@ export async function translateTexts(texts, fromLang, toLang, engineName) {
     engine: usedEngine,
     degraded,
     echoed: echoUnitSeen.size,
-    error: ok ? errorMessage : errorMessage || `仅 ${filled}/${texts.length} 段获得译文`,
+    error: ok ? errorMessage : errorMessage || I18N.t("batchPartialResult", filled, texts.length),
   };
 }
 
@@ -398,7 +421,7 @@ async function runWithFallback(texts, from, to, engineName) {
       try {
         engine = createEngine(name, settings.apiKey || null, settings);
         if (!(await engine.isAvailable())) {
-          failures.push(`${name}: 未配置`);
+          failures.push(I18N.t("engineNotConfigured", engineLabel(name)));
           continue;
         }
       } catch (error) {
@@ -415,7 +438,7 @@ async function runWithFallback(texts, from, to, engineName) {
           results,
           engine: name,
           degraded,
-          error: degraded ? `已从 ${engineName} 降级到 ${name}` : null,
+          error: degraded ? I18N.t("engineDegraded", engineLabel(engineName), engineLabel(name)) : null,
         };
       } catch (error) {
         coolDown(name, error.message);
@@ -424,7 +447,7 @@ async function runWithFallback(texts, from, to, engineName) {
     }
   }
 
-  throw new FatalTranslationError(`所有引擎失败 → ${failures.join("; ")}`);
+  throw new FatalTranslationError(I18N.t("allEnginesFailed", failures.join("; ")));
 }
 
 /**
