@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🌐 网页翻译
+# 网页翻译
 
 **一键翻译整个网页，保留链接、图片与排版结构**
 
 Manifest V3 · 零构建 · 零运行时依赖
 
-![Version](https://img.shields.io/badge/version-1.1.5-blue)
+![Version](https://img.shields.io/badge/version-1.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-102%2B-green?logo=googlechrome&logoColor=white)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange)
-![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-176%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 [![Edge Add-ons](https://img.shields.io/badge/Get_it_from-Microsoft-0d6cb6?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/henmhjmgjajggnhhopblkgclfoalblan)
 
@@ -18,7 +18,10 @@ Manifest V3 · 零构建 · 零运行时依赖
 <!-- TODO: 补一张翻译前后对比截图，放 docs/screenshot.png
 ![截图](docs/screenshot.png) -->
 
-## ✨ 功能特性
+> [!NOTE]
+> 纯本地架构：翻译在浏览器内完成，页面内容不上传；引擎请求只发往用户选定的翻译服务。
+
+## 功能特性
 
 ### 翻译能力
 
@@ -42,7 +45,7 @@ Manifest V3 · 零构建 · 零运行时依赖
 - **🤖 自动翻译** 页面语言与目标语言不同时自动翻译
 - **🌍 30 种语言**，中英双语界面
 
-## 📥 安装
+## 安装
 
 ### Microsoft Edge（推荐）
 
@@ -59,7 +62,7 @@ Manifest V3 · 零构建 · 零运行时依赖
 3. 右上角开启「**开发者模式**」
 4. 点击「**加载已解压的扩展程序**」，选择本目录
 
-## 🎯 使用
+## 使用
 
 | 操作 | 方式 |
 |------|------|
@@ -70,7 +73,7 @@ Manifest V3 · 零构建 · 零运行时依赖
 
 > 弹窗只负责「翻 / 还原」两件事；引擎属于一次性配置，统一放在设置页，避免误触。
 
-## ⚙️ 翻译引擎
+## 翻译引擎
 
 | 引擎 | 状态 | 说明 |
 |------|------|------|
@@ -134,7 +137,7 @@ Chrome 138+ 与 Edge 148+ 都内置了同一套 **Translator API**，由设备�
 > 本扩展不再将其作为可用引擎展示；已迁移为 Azure Translator 正式接口，需要用户自己的密钥。
 > 界面显示的引擎状态来自真实探测，不是写死文案。
 
-## 🧠 工作原理：块级翻译单元
+## 工作原理：块级翻译单元
 
 逐 TEXT 节点翻译是错误的做法——`Read the <a>docs</a> before you <b>start</b>.`
 拆成 5 段分别翻译，中文语序必然错乱。
@@ -155,7 +158,7 @@ OpenAI 兼容等纯文本接口会把 `<0>` 当 HTML 剥掉，所以自定义引
 成对占位符（`{{0}}docs{{1}}`）——它是普通文本 token，实测 Google 与 DeepL 类引擎
 都能原样保留并随语序重排，还原逻辑与标签占位符同一套校验。
 
-## 🗂 项目结构
+## 项目结构
 
 ```text
 background/
@@ -183,7 +186,7 @@ test/
   e2e.mjs             真实 Chrome 端到端
 ```
 
-## 🛠 开发
+## 开发
 
 ```bash
 npm install
@@ -204,7 +207,7 @@ Lint 用 ESLint 10 的 flat config（`eslint.config.mjs`）。原先依赖的 `e
 E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`（有头模式）、
 `TP_E2E_NO_SANDBOX=1`（容器 / CI / 受限用户会话里 Chrome 自身沙箱无法初始化时开启）。
 
-## ⚠️ 已知限制
+## 已知限制
 
 - 仅注入主框架（`all_frames: false`），iframe 内内容由其自身页面负责
 - `pre`、`code`、表单控件、`contenteditable` 区域不翻译（设计如此）
@@ -213,7 +216,16 @@ E2E 相关环境变量：`TP_E2E_PROXY`（指定代理）、`TP_E2E_HEADFUL=1`�
 - 自定义接口默认**按预设并发**发送（通用 / DeepLX / LibreTranslate 为 4，OpenAI 为 2；不同服务的批量格式差异太大，
   不做请求合并）。对限流敏感的公共免费实例，请换用对应预设或把 `concurrency` 调回 1（此时会保留 120ms 节流间隔）
 
-## 📝 更新日志
+## 更新日志
+
+### v1.3.0 — 运行时文案 i18n
+
+所有运行时文案接入 i18n（中英双语），设置页与弹窗不再有硬编码字符串。
+
+### v1.2.x — 端侧翻译与恢复原文
+
+- v1.2.0：端侧翻译优化，修复「恢复原文」与动态内容翻译的竞态
+- v1.2.1 / v1.2.2：修复 echo 结果污染缓存导致中英混排段落卡在原文；修复限流下只翻译三分之一的问题
 
 ### 工具链 — 依赖漏洞清零
 
@@ -353,6 +365,6 @@ v1.1.4 之后真机验证追加的两项修复。**如果你用自定义接口�
 - 端侧翻译开关、译文样式（下划线 / 高亮）
 - Google 批量失败时的单条兜底端点
 
-## 📄 License
+## License
 
 [MIT](LICENSE)
